@@ -1,0 +1,54 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=Noto+Sans+KR:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+  /* Design System Colors - Light Theme */
+  --dark: #0F1B2D;
+  --navy: #1A2744;
+  --navy-light: #1E3050;
+  --sidebar: #162035;
+  --accent: #00B4D8;
+  --accent-dark: #0077B6;
+  --gold: #FFB703;
+  --white: #FFFFFF;
+  --light: #E8F4F8;
+  --light-bg: #F0F4F8;
+  --gray: #8B9BB4;
+  --gray-dark: #5A6A7E;
+  --green: #06D6A0;
+  --green-light: #D1FAE5;
+  --red: #EF476F;
+  --red-light: #FDE8EF;
+  --orange: #FB8500;
+  --orange-light: #FFF3E0;
+  --purple: #7C3AED;
+  --purple-light: #EDE9FE;
+  --border: #E2E8F0;
+  --card: #FFFFFF;
+  --table-header: #F1F5F9;
+  --table-alt: #F8FAFC;
+}
+
+/* Base styles for light theme in main content area */
+body {
+  @apply bg-light-bg text-dark;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(224, 231, 240, 0.5);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(224, 231, 240, 0.8);
+}

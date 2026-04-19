@@ -1,0 +1,33 @@
+{
+  "name": "metis-ai",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Metis.AI — Multi-tenant AgentOps Governance SaaS",
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "clean": "turbo run clean",
+    "db:generate": "pnpm --filter @metis/database generate",
+    "db:migrate": "pnpm --filter @metis/database migrate:dev",
+    "db:push": "pnpm --filter @metis/database push",
+    "db:seed": "pnpm --filter @metis/database seed",
+    "db:studio": "pnpm --filter @metis/database studio",
+    "docker:up": "docker compose -f infra/compose/docker-compose.yml up -d",
+    "docker:down": "docker compose -f infra/compose/docker-compose.yml down",
+    "docker:reset": "docker compose -f infra/compose/docker-compose.yml down -v && docker compose -f infra/compose/docker-compose.yml up -d"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "prisma": "6.19.3",
+    "turbo": "latest"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "dependencies": {
+    "@prisma/client": "6.19.3"
+  }
+}

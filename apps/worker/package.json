@@ -1,0 +1,21 @@
+{
+  "name": "@metis/worker",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsc --build",
+    "start": "node dist/main.js",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@metis/database": "workspace:*",
+    "@metis/types": "workspace:*",
+    "bullmq": "^5.25.0",
+    "ioredis": "^5.4.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

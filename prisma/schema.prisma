@@ -1,0 +1,1544 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MembershipRole {
+  PLATFORM_ADMIN
+  TENANT_ADMIN
+  OPERATOR
+  DEVELOPER
+  AUDITOR
+  VIEWER
+}
+
+enum PackSourceType {
+  GITHUB
+  MCP
+  N8N
+  MANUAL
+  INTERNAL
+}
+
+enum PackStatus {
+  DRAFT
+  IMPORTED
+  VALIDATED
+  CERTIFIED
+  PUBLISHED
+  DEPRECATED
+  BLOCKED
+}
+
+enum InstallationStatus {
+  INSTALLED
+  DISABLED
+  UPGRADE_AVAILABLE
+  FAILED
+  REMOVED
+}
+
+enum ExecutionStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+  BLOCKED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  IMPORT
+  INSTALL
+  UNINSTALL
+  EXECUTE
+  CERTIFY
+  REVOKE_CERTIFICATION
+  PUBLISH
+  LOGIN
+  POLICY_CHECK
+  STATUS_TRANSITION
+  BLOCK
+  DEPRECATE
+  // Phase 3: Controlled Release Engineering
+  REPLAY_DATASET_CREATE
+  REPLAY_RUN_START
+  SHADOW_CONFIG_CREATE
+  SHADOW_PAIR_CREATE
+  CANARY_START
+  CANARY_GATE_EVALUATE
+  CANARY_PROMOTE
+  CANARY_ROLLBACK
+  VERSION_PROMOTE
+  VERSION_ROLLBACK
+  // Phase 6: Workflow Persistence
+  ARCHIVE
+  RESTORE
+}
+
+// ══════════════════════════════════════════════════════
+//  Phase 3 Enums
+// ══════════════════════════════════════════════════════
+
+enum ReplayRunStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum ShadowPairStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum CanaryStatus {
+  PENDING
+  ACTIVE
+  PAUSED
+  PROMOTED
+  ROLLED_BACK
+  FAILED
+}
+
+enum CanaryGateResult {
+  PASS
+  FAIL
+  WARN
+  PENDING
+}
+
+enum PromotionAction {
+  PROMOTE
+  ROLLBACK
+}
+
+model Tenant {
+  id            String               @id @default(cuid())
+  slug          String               @unique
+  name          String
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  users         Membership[]
+  policies      Policy[]
+  packs         PackInstallation[]
+  executions    ExecutionSession[]
+  auditLogs     AuditLog[]
+  connectors    Connector[]
+  knowledge     KnowledgeArtifact[]
+  finOpsConfig          FinOpsConfig?
+  finOpsAgentConfigs    FinOpsAgentConfig[]
+  finOpsSkills          FinOpsSkill[]
+  finOpsNamespaces      FinOpsNamespace[]
+  finOpsTokenLogs       FinOpsTokenLog[]
+  builderRequests       BuilderRequest[]
+  // Phase 5 (Redesign)
+  missions              Mission[]
+  agentMessages         AgentMessage[]
+  agentHandoffs         AgentHandoff[]
+  autoActions           AutoAction[]
+  fdsRules              FDSRule[]
+  fdsAlerts             FDSAlert[]
+  apInvoices            APInvoice[]
+  // Phase 6
+  agentDefinitions      AgentDefinition[]
+  adapterRegistrations  AdapterRegistration[]
+  capabilityBindings    CapabilityBinding[]
+  // Phase 6 Step 2 — Workflow Persistence
+  workflows             Workflow[]
+}
+
+model User {
+  id            String               @id @default(cuid())
+  email         String               @unique
+  name          String
+  isActive      Boolean              @default(true)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  memberships   Membership[]
+  auditLogs     AuditLog[]
+  // Phase 6 Step 2 — Workflow Persistence
+  workflowsCreated        Workflow[]        @relation("WorkflowCreatedBy")
+  workflowsUpdated        Workflow[]        @relation("WorkflowUpdatedBy")
+  workflowVersionsCreated WorkflowVersion[] @relation("WorkflowVersionCreatedBy")
+}
+
+model Membership {
+  id            String               @id @default(cuid())
+  tenantId      String
+  userId        String
+  role          MembershipRole
+  createdAt     DateTime             @default(now())
+
+  tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, userId])
+  @@index([tenantId, role])
+}
+
+model Policy {
+  id            String               @id @default(cuid())
+  tenantId      String
+  key           String
+  name          String
+  description   String?
+  version       Int                  @default(1)
+  isActive      Boolean              @default(true)
+  ruleYaml      String
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  tenant        Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  evaluations   PolicyEvaluation[]
+
+  @@unique([tenantId, key])
+  @@index([tenantId, isActive])
+}
+
+model PolicyEvaluation {
+  id                String           @id @default(cuid())
+  tenantId          String
+  policyId          String
+  executionSessionId String?
+  result            String
+  reason            String?
+  createdAt         DateTime         @default(now())
+
+  policy            Policy           @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, policyId])
+  @@index([executionSessionId])
+}
+
+model Pack {
+  id            String               @id @default(cuid())
+  key           String               @unique
+  name          String
+  sourceType    PackSourceType
+  sourceUrl     String?
+  description   String?
+  icon          String?
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  versions      PackVersion[]
+  installs      PackInstallation[]
+}
+
+model PackVersion {
+  id            String               @id @default(cuid())
+  packId        String
+  version       String
+  manifestJson  Json
+  checksum      String?
+  status        PackStatus           @default(DRAFT)
+  certifiedAt   DateTime?
+  publishedAt   DateTime?
+  createdAt     DateTime             @default(now())
+
+  pack          Pack                 @relation(fields: [packId], references: [id], onDelete: Cascade)
+  certifications Certification[]
+  installs      PackInstallation[]
+
+  @@unique([packId, version])
+  @@index([status, createdAt])
+}
+
+model Certification {
+  id             String              @id @default(cuid())
+  tenantId       String?
+  packVersionId  String
+  level          String
+  score          Int?
+  findingsJson   Json?
+  createdAt      DateTime            @default(now())
+
+  packVersion    PackVersion         @relation(fields: [packVersionId], references: [id], onDelete: Cascade)
+
+  @@index([packVersionId, createdAt])
+}
+
+model PackInstallation {
+  id             String              @id @default(cuid())
+  tenantId       String
+  packId         String
+  packVersionId  String
+  status         InstallationStatus  @default(INSTALLED)
+  installedById  String?
+  installedAt    DateTime            @default(now())
+  configJson     Json?
+
+  tenant         Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  pack           Pack                @relation(fields: [packId], references: [id], onDelete: Cascade)
+  packVersion    PackVersion         @relation(fields: [packVersionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
+  @@unique([tenantId, packId, packVersionId])
+}
+
+model Connector {
+  id             String              @id @default(cuid())
+  tenantId       String
+  key            String
+  name           String
+  type           String
+  status         String
+  configJson     Json?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  tenant         Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@index([tenantId, type, status])
+}
+
+model ExecutionSession {
+  id             String              @id @default(cuid())
+  tenantId       String
+  packInstallationId String?
+  workflowKey    String?
+  capabilityKey  String?
+  correlationId  String?
+  status         ExecutionStatus     @default(QUEUED)
+  startedAt      DateTime?
+  endedAt        DateTime?
+  completedAt    DateTime?
+  triggeredById  String?
+  inputJson      Json?
+  outputJson     Json?
+  costUsd        Decimal?            @db.Decimal(12, 4)
+  latencyMs      Int?
+  createdAt      DateTime            @default(now())
+
+  tenant         Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  steps          ExecutionStep[]
+  traces         ExecutionTrace[]
+
+  @@index([tenantId, status, createdAt])
+  @@index([workflowKey])
+  @@index([correlationId])
+}
+
+model ExecutionStep {
+  id               String            @id @default(cuid())
+  executionSessionId String
+  stepKey          String
+  stepType         String
+  capabilityKey    String?
+  status           ExecutionStatus
+  startedAt        DateTime?
+  endedAt          DateTime?
+  inputJson        Json?
+  outputJson       Json?
+  errorMessage     String?
+  latencyMs        Int?
+
+  session          ExecutionSession  @relation(fields: [executionSessionId], references: [id], onDelete: Cascade)
+
+  @@index([executionSessionId, status])
+}
+
+model ExecutionTrace {
+  id               String            @id @default(cuid())
+  executionSessionId String
+  correlationId    String
+  traceJson        Json
+  createdAt        DateTime          @default(now())
+
+  session          ExecutionSession  @relation(fields: [executionSessionId], references: [id], onDelete: Cascade)
+
+  @@index([executionSessionId])
+  @@index([correlationId])
+}
+
+model AuditLog {
+  id             String              @id @default(cuid())
+  tenantId       String
+  actorUserId    String?
+  action         AuditAction
+  targetType     String
+  targetId       String?
+  policyResult   String?
+  correlationId  String
+  metadataJson   Json?
+  createdAt      DateTime            @default(now())
+
+  tenant         Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  actor          User?               @relation(fields: [actorUserId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@index([correlationId])
+  @@index([targetType, targetId])
+}
+
+model KnowledgeArtifact {
+  id             String              @id @default(cuid())
+  tenantId       String
+  key            String
+  title          String
+  category       String
+  status         String
+  version        String
+  contentJson    Json?
+  validUntil     DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  tenant         Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@index([tenantId, category, status])
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  Phase 3: Controlled Release Engineering — Replay / Shadow / Canary
+// ══════════════════════════════════════════════════════════════════
+
+/// Replay Dataset — collection of captured execution inputs/outputs for regression testing
+model ReplayDataset {
+  id             String              @id @default(cuid())
+  tenantId       String
+  name           String
+  description    String?
+  /// Filters used to create this dataset
+  filterJson     Json?               // { workflowKey, capabilityKey, packVersionId, dateFrom, dateTo, status }
+  /// Baseline PackVersion this dataset was captured from
+  baselineVersionId String?
+  caseCount      Int                 @default(0)
+  createdById    String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  cases          ReplayCase[]
+  runs           ReplayRun[]
+
+  @@index([tenantId, createdAt])
+  @@index([baselineVersionId])
+}
+
+/// Replay Case — individual test case within a dataset
+model ReplayCase {
+  id               String            @id @default(cuid())
+  datasetId        String
+  /// Source execution this case was captured from
+  sourceExecutionId String?
+  /// Execution parameters
+  workflowKey      String?
+  capabilityKey    String?
+  packVersionId    String?
+  inputJson        Json
+  /// Expected baseline output (from source execution)
+  expectedOutputJson Json?
+  expectedStatus     String?         // SUCCEEDED, FAILED, etc.
+  expectedLatencyMs  Int?
+  /// Tagging
+  isGolden         Boolean           @default(false)
+  riskLevel        String?           // low, medium, high, critical
+  tags             String[]          @default([])
+  createdAt        DateTime          @default(now())
+
+  dataset          ReplayDataset     @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  results          ReplayCaseResult[]
+
+  @@index([datasetId, isGolden])
+  @@index([datasetId, riskLevel])
+}
+
+/// Replay Run — execution of a dataset against a candidate version
+model ReplayRun {
+  id               String            @id @default(cuid())
+  tenantId         String
+  datasetId        String
+  /// Candidate version being tested
+  candidateVersionId String
+  /// Baseline version for comparison
+  baselineVersionId  String?
+  status           ReplayRunStatus   @default(PENDING)
+  /// Aggregate metrics
+  totalCases       Int               @default(0)
+  passedCases      Int               @default(0)
+  failedCases      Int               @default(0)
+  errorCases       Int               @default(0)
+  /// Aggregate comparison metrics
+  metricsJson      Json?             // { avgLatencyMs, totalCostUsd, policyViolations, errorRate, successRate }
+  startedAt        DateTime?
+  completedAt      DateTime?
+  triggeredById    String?
+  createdAt        DateTime          @default(now())
+
+  dataset          ReplayDataset     @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  caseResults      ReplayCaseResult[]
+
+  @@index([tenantId, status, createdAt])
+  @@index([candidateVersionId])
+}
+
+/// Replay Case Result — per-case outcome within a replay run
+model ReplayCaseResult {
+  id               String            @id @default(cuid())
+  runId            String
+  caseId           String
+  /// Actual execution details
+  executionSessionId String?         // links to actual ExecutionSession
+  actualStatus     String?
+  actualOutputJson Json?
+  actualLatencyMs  Int?
+  actualCostUsd    Decimal?          @db.Decimal(12, 4)
+  /// Comparison results
+  statusMatch      Boolean?
+  outputDiffJson   Json?             // structured diff of expected vs actual
+  latencyDeltaMs   Int?
+  costDeltaUsd     Decimal?          @db.Decimal(12, 4)
+  policyViolations Int               @default(0)
+  retryCount       Int               @default(0)
+  /// Overall verdict for this case
+  verdict          String?           // PASS, FAIL, REGRESSION, IMPROVEMENT, ERROR
+  verdictReason    String?
+  createdAt        DateTime          @default(now())
+
+  run              ReplayRun         @relation(fields: [runId], references: [id], onDelete: Cascade)
+  replayCase       ReplayCase        @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@index([runId, verdict])
+  @@index([caseId])
+}
+
+/// Shadow Configuration — defines how shadow traffic is routed
+model ShadowConfig {
+  id               String            @id @default(cuid())
+  tenantId         String
+  name             String
+  /// Production version (control)
+  controlVersionId   String
+  /// Candidate version (shadow)
+  candidateVersionId String
+  /// Routing rules
+  workflowFilter     String[]        @default([])  // empty = all workflows
+  capabilityFilter   String[]        @default([])
+  samplingRate       Float           @default(1.0)  // 0.0-1.0 fraction of traffic to shadow
+  isActive           Boolean         @default(true)
+  /// Aggregate metrics
+  totalPairs         Int             @default(0)
+  metricsJson        Json?
+  createdById        String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  pairs              ShadowPair[]
+
+  @@index([tenantId, isActive])
+  @@index([controlVersionId])
+}
+
+/// Shadow Pair — paired execution: production (control) vs shadow (candidate)
+model ShadowPair {
+  id                   String        @id @default(cuid())
+  configId             String
+  tenantId             String
+  /// Control (production) execution
+  controlExecutionId   String
+  /// Shadow (candidate) execution — runs without side-effects
+  shadowExecutionId    String?
+  status               ShadowPairStatus @default(PENDING)
+  /// Comparison results
+  controlStatus        String?
+  shadowStatus         String?
+  controlOutputJson    Json?
+  shadowOutputJson     Json?
+  controlLatencyMs     Int?
+  shadowLatencyMs      Int?
+  controlCostUsd       Decimal?      @db.Decimal(12, 4)
+  shadowCostUsd        Decimal?      @db.Decimal(12, 4)
+  /// Diff analysis
+  outputDiffJson       Json?
+  policyViolationsDelta Int          @default(0)
+  verdict              String?       // MATCH, DIVERGED, REGRESSION, IMPROVEMENT, ERROR
+  verdictReason        String?
+  createdAt            DateTime      @default(now())
+
+  config               ShadowConfig  @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@index([configId, status])
+  @@index([tenantId, createdAt])
+  @@index([controlExecutionId])
+}
+
+/// Canary Deployment — staged rollout of a candidate version
+model CanaryDeployment {
+  id                   String        @id @default(cuid())
+  tenantId             String
+  name                 String
+  /// Versions
+  stableVersionId      String        // currently active stable version
+  candidateVersionId   String        // version being rolled out
+  packId               String
+  /// Rollout configuration
+  initialTrafficPct    Int           @default(5)    // starting traffic %
+  currentTrafficPct    Int           @default(0)    // current traffic %
+  maxTrafficPct        Int           @default(100)
+  incrementStepPct     Int           @default(10)   // % increase per window
+  windowDurationMs     Int           @default(3600000) // evaluation window (default 1hr)
+  /// Scope filters
+  workflowFilter       String[]      @default([])
+  capabilityFilter     String[]      @default([])
+  tenantSubset         String[]      @default([])   // for platform-level canary
+  /// State
+  status               CanaryStatus  @default(PENDING)
+  currentWindow        Int           @default(0)
+  startedAt            DateTime?
+  completedAt          DateTime?
+  /// Rollback config
+  autoRollbackEnabled  Boolean       @default(true)
+  rollbackReason       String?
+  /// Metadata
+  createdById          String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  gates                CanaryGate[]
+  metrics              CanaryMetricSnapshot[]
+
+  @@index([tenantId, status])
+  @@index([packId, status])
+}
+
+/// Canary Gate — evaluation checkpoint during canary rollout
+model CanaryGate {
+  id                   String        @id @default(cuid())
+  deploymentId         String
+  windowNumber         Int
+  /// Gate rules evaluated
+  rulesJson            Json          // [{ metric, operator, threshold, weight }]
+  /// Results
+  result               CanaryGateResult @default(PENDING)
+  metricsJson          Json?         // snapshot of metrics at gate time
+  /// Mandatory comparison metrics
+  successRate          Float?
+  errorRate            Float?
+  policyViolationCount Int?
+  avgLatencyMs         Int?
+  p99LatencyMs         Int?
+  avgCostUsd           Decimal?      @db.Decimal(12, 4)
+  retryCount           Int?
+  invalidOutputCount   Int?          // hallucination / invalid output signals
+  /// Decision
+  evaluatedAt          DateTime?
+  evaluatedById        String?       // null = automatic
+  reason               String?
+  createdAt            DateTime      @default(now())
+
+  deployment           CanaryDeployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+
+  @@index([deploymentId, windowNumber])
+}
+
+/// Canary Metric Snapshot — periodic metric observation during canary
+model CanaryMetricSnapshot {
+  id                   String        @id @default(cuid())
+  deploymentId         String
+  windowNumber         Int
+  /// Metric data
+  stableMetricsJson    Json          // metrics from stable version traffic
+  candidateMetricsJson Json          // metrics from candidate version traffic
+  /// Individual metrics (for indexing/querying)
+  stableSuccessRate    Float?
+  candidateSuccessRate Float?
+  stableAvgLatencyMs   Int?
+  candidateAvgLatencyMs Int?
+  totalStableExecs     Int           @default(0)
+  totalCandidateExecs  Int           @default(0)
+  capturedAt           DateTime      @default(now())
+
+  deployment           CanaryDeployment @relation(fields: [deploymentId], references: [id], onDelete: Cascade)
+
+  @@index([deploymentId, windowNumber])
+}
+
+/// Version Promotion — promotion or rollback decision record
+model VersionPromotion {
+  id                   String        @id @default(cuid())
+  tenantId             String
+  packId               String
+  /// Version involved
+  fromVersionId        String
+  toVersionId          String
+  action               PromotionAction
+  /// Decision context
+  reason               String?
+  /// Source of decision: canary deployment, manual, replay result
+  sourceType           String?       // CANARY, MANUAL, REPLAY
+  sourceId             String?       // canaryDeploymentId, replayRunId, etc.
+  /// Evaluation summary at decision time
+  evaluationSummaryJson Json?
+  /// Actor
+  decidedById          String?
+  decidedAt            DateTime      @default(now())
+  /// Rollback metadata
+  rollbackFromVersionId String?
+  isEmergency          Boolean       @default(false)
+  createdAt            DateTime      @default(now())
+
+  @@index([tenantId, packId, createdAt])
+  @@index([action, createdAt])
+}
+
+// ────────────────────────────────────────
+// Phase 4 – FinOps Token Optimizer
+// ────────────────────────────────────────
+
+model FinOpsConfig {
+  id                    String    @id @default(cuid())
+  tenantId              String
+  
+  // Gate 1: Semantic Cache
+  cacheEnabled          Boolean   @default(true)
+  cacheBackend          String    @default("redis")
+  cacheSimilarityThreshold Float  @default(0.93)
+  cacheTtlSeconds       Int       @default(86400)
+  cacheEmbeddingModel   String    @default("text-embedding-3-small")
+  cacheMaxMemoryMb      Int       @default(1024)
+  cacheWarmupEntries    Int       @default(100)
+  cacheExcludePatterns  String[]  @default([])
+  
+  // Gate 2: Model Router
+  routerEnabled         Boolean   @default(true)
+  routerStage1Enabled   Boolean   @default(true)
+  routerStage2Enabled   Boolean   @default(true)
+  routerClassifierModel String    @default("claude-haiku-4.5")
+  routerFallbackTier    Int       @default(2)
+  routerTier1Models     String[]  @default(["claude-haiku-4.5", "gemini-3-flash", "gpt-4o-mini"])
+  routerTier2Models     String[]  @default(["claude-sonnet-4.6", "gpt-4o", "gemini-3.1-pro"])
+  routerTier3Models     String[]  @default(["claude-opus-4.6", "o3", "gpt-5"])
+  
+  // Gate 3: Skill Packer
+  packerEnabled         Boolean   @default(true)
+  packerMaxTokensPerSkill Int     @default(2000)
+  packerOutputFormat    String    @default("JSON")
+  
+  // Monitoring
+  alertCacheHitMinPct   Int       @default(20)
+  alertDailyCostMax     Float     @default(50.0)
+  alertTier3MaxPct      Int       @default(30)
+  alertResponseDelayMs  Int       @default(5000)
+  alertSlackEnabled     Boolean   @default(true)
+  alertSlackChannel     String    @default("#finops-alerts")
+  alertEmailEnabled     Boolean   @default(true)
+  alertEmailAddress     String    @default("")
+  alertPagerDutyEnabled Boolean   @default(false)
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  
+  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  
+  @@unique([tenantId])
+}
+
+model FinOpsAgentConfig {
+  id                    String    @id @default(cuid())
+  tenantId              String
+  agentName             String
+  status                String    @default("운영")
+  cacheEnabled          Boolean   @default(true)
+  routerEnabled         Boolean   @default(true)
+  packerEnabled         Boolean   @default(true)
+  allowedTiers          Int[]     @default([1, 2, 3])
+  namespace             String    @default("default")
+  dailyLimitUsd         Float     @default(10.0)
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  
+  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  
+  @@unique([tenantId, agentName])
+  @@index([tenantId])
+}
+
+model FinOpsSkill {
+  id                    String    @id @default(cuid())
+  tenantId              String
+  skillId               String
+  name                  String
+  defaultTier           Int       @default(1)
+  invocationCount       Int       @default(0)
+  status                String    @default("활성")
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  
+  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  
+  @@unique([tenantId, skillId])
+  @@index([tenantId])
+}
+
+model FinOpsNamespace {
+  id                    String    @id @default(cuid())
+  tenantId              String
+  namespace             String
+  cacheEntries          Int       @default(0)
+  hitRate               Float     @default(0)
+  ttlPolicy             String    @default("24h")
+  status                String    @default("활성")
+  
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  
+  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  
+  @@unique([tenantId, namespace])
+  @@index([tenantId])
+}
+
+model FinOpsTokenLog {
+  id                    String    @id @default(cuid())
+  tenantId              String
+  agentName             String
+  executionSessionId    String?
+  nodeId                String?
+  
+  // Request info
+  promptText            String?
+  promptTokens          Int       @default(0)
+  completionTokens      Int       @default(0)
+  totalTokens           Int       @default(0)
+  
+  // Gate results
+  cacheHit              Boolean   @default(false)
+  cachedResponseUsed    Boolean   @default(false)
+  routedTier            Int       @default(2)
+  routedModel           String    @default("")
+  originalCostUsd       Float     @default(0)
+  optimizedCostUsd      Float     @default(0)
+  savedUsd              Float     @default(0)
+  
+  // Performance
+  responseTimeMs        Int       @default(0)
+  
+  createdAt             DateTime  @default(now())
+  
+  tenant                Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  
+  @@index([tenantId, createdAt])
+  @@index([tenantId, agentName])
+  @@index([executionSessionId])
+}
+
+// ═══════════════════════════════════════════════════════════
+// Phase 5: Builder Harness — Eval/Validation/Repair Subsystem
+// ═══════════════════════════════════════════════════════════
+
+enum BuilderRequestStatus {
+  PLANNING
+  VALIDATING
+  EVALUATED
+  SAVED
+  REPAIR_LOOP
+  REJECTED
+}
+
+// Note: HarnessIssueSeverity is stored as JSON (issuesJson), not as a column enum.
+// The ReadinessBand enum below is used as a Prisma column type.
+
+enum ReadinessBand {
+  EXCELLENT
+  GOOD
+  FAIR
+  POOR
+  CRITICAL
+}
+
+/// A single Builder invocation lifecycle, from user prompt → plan → validate → eval → save/reject.
+model BuilderRequest {
+  id              String               @id @default(cuid())
+  tenantId        String
+  userId          String
+  status          BuilderRequestStatus @default(PLANNING)
+
+  // Input
+  userPrompt      String
+  detectedIntents Json?                // IntentClassification[]
+  matchedTemplate String?              // template ID chosen
+
+  // Pipeline timestamps
+  planCreatedAt       DateTime?
+  validationDoneAt    DateTime?
+  evalDoneAt          DateTime?
+  savedAt             DateTime?
+
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  // Relations
+  plan            BuilderPlan?
+  paramSet        BuilderParamSet?
+  connectorGaps   BuilderConnectorGap[]
+  validationResult BuilderValidationResult?
+  evalResult      BuilderEvalResult?
+  repairActions   BuilderRepairAction[]
+
+  tenant          Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, status])
+  @@index([userId])
+}
+
+/// The workflow plan produced by the planner (template match + node graph).
+model BuilderPlan {
+  id              String        @id @default(cuid())
+  requestId       String        @unique
+  templateId      String?
+  templateName    String?
+  nodesJson       Json          // TemplateNode[] — full node graph
+  connectorsJson  Json?         // string[] — required connector keys
+  policiesJson    Json?         // PolicyCheckpoint[]
+  parametersJson  Json?         // WorkflowParameter[]
+  metadata        Json?         // { category, triggerType, estimatedDuration, ... }
+
+  createdAt       DateTime      @default(now())
+
+  request         BuilderRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+/// Extracted/resolved parameters for a builder plan.
+model BuilderParamSet {
+  id              String        @id @default(cuid())
+  requestId       String        @unique
+  parametersJson  Json          // Record<string, { key, label, value, resolved }[]>
+  unresolvedCount Int           @default(0)
+
+  createdAt       DateTime      @default(now())
+
+  request         BuilderRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+/// Per-connector gap analysis for a builder request.
+model BuilderConnectorGap {
+  id              String        @id @default(cuid())
+  requestId       String
+  connectorKey    String
+  connectorName   String
+  tier            String        // tier1-must | tier2-reporting | tier3-knowledge
+  status          String        // available | placeholder | missing
+  requiredSecrets Json?         // string[]
+  resolution      String?       // how the gap was resolved (if any)
+
+  createdAt       DateTime      @default(now())
+
+  request         BuilderRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId])
+}
+
+/// Structural validation result (BH-4 output).
+model BuilderValidationResult {
+  id                  String   @id @default(cuid())
+  requestId           String   @unique
+  isValid             Boolean  @default(false)
+  canSaveWithWarnings Boolean  @default(false)
+  blockingErrorCount  Int      @default(0)
+  warningCount        Int      @default(0)
+  issuesJson          Json     // HarnessIssue[]
+  repairActionsJson   Json?    // RepairAction[]
+
+  createdAt           DateTime @default(now())
+
+  request             BuilderRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+/// Readiness evaluation result (BH-5 output).
+model BuilderEvalResult {
+  id                    String       @id @default(cuid())
+  requestId             String       @unique
+  overallScore          Int          @default(0)   // 0-100
+  band                  ReadinessBand @default(CRITICAL)
+
+  // 5-axis sub-scores
+  executionReadiness    Int          @default(0)
+  connectorValidity     Int          @default(0)
+  policyCoverage        Int          @default(0)
+  operatorUsability     Int          @default(0)
+  monitoringVisibility  Int          @default(0)
+
+  subScoresJson         Json?        // full ReadinessSubScore[]
+  issuesJson            Json?        // HarnessIssue[]
+  recommendedFixes      Json?        // string[]
+
+  // Simulation (10-50 sample replay)
+  simulationJson        Json?        // { sampleCount, generationSuccessRate, executionFeasibilityRate, connectorMismatchRate, policyViolationRisk, humanEditRate }
+
+  // Save decision
+  canSave               Boolean      @default(false)
+  requiresAcknowledgement Boolean    @default(false)
+
+  createdAt             DateTime     @default(now())
+
+  request               BuilderRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+/// Individual repair action applied (or suggested) for a builder request.
+model BuilderRepairAction {
+  id              String   @id @default(cuid())
+  requestId       String
+  repairType      String   // add-node | inject-retry | add-approval | ...
+  label           String
+  description     String
+  targetNodeId    String?
+  applied         Boolean  @default(false)
+  appliedAt       DateTime?
+  resultJson      Json?    // outcome after repair
+
+  createdAt       DateTime @default(now())
+
+  request         BuilderRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId])
+}
+
+// ============================================================
+// Phase 5 (Redesign): Agent Kernel — A2A Collaboration
+// ============================================================
+
+enum MissionStatus {
+  PLANNING         // Drafted, awaiting start
+  RUNNING          // Active, agents collaborating
+  WAITING_HUMAN    // Paused for human intervention
+  SUCCEEDED        // Completed successfully
+  FAILED           // Terminal failure
+  CANCELLED        // User/system cancelled
+  ROLLED_BACK      // Auto-reverted
+}
+
+enum AgentMessageKind {
+  REQUEST
+  RESPONSE
+  EVENT
+  HANDOFF
+  HUMAN_INTERVENTION
+  SYSTEM
+}
+
+enum HandoffStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
+}
+
+/// Multi-agent collaboration mission — a named work session that multiple agents participate in.
+model Mission {
+  id                String          @id @default(cuid())
+  tenantId          String
+  key               String          // Human-friendly slug
+  title             String
+  description       String?
+  status            MissionStatus   @default(PLANNING)
+  kind              String          // 'DEPLOYMENT' | 'INCIDENT' | 'AP_PROCESS' | 'RISK_REVIEW' | 'CUSTOM'
+
+  // Orchestration state
+  participants      Json            // Array of agent identifiers + roles
+  currentStepIndex  Int             @default(0)
+  plannedStepsJson  Json?           // Blueprint of intended flow
+  contextJson       Json?           // Working context shared across agents
+
+  // Audit & trace
+  correlationId     String
+  createdByUserId   String?
+  startedAt         DateTime?
+  endedAt           DateTime?
+
+  // Self-healing
+  autoActionsCount  Int             @default(0)
+  humanInterventionsCount Int       @default(0)
+
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  messages          AgentMessage[]
+  handoffs          AgentHandoff[]
+  autoActions       AutoAction[]
+
+  @@unique([tenantId, key])
+  @@index([tenantId, status])
+  @@index([correlationId])
+}
+
+/// Individual message between agents (or system) within a mission.
+model AgentMessage {
+  id                String            @id @default(cuid())
+  tenantId          String
+  missionId         String
+  kind              AgentMessageKind
+  fromAgent         String            // Sender agent identifier
+  toAgent           String?           // Recipient (null = broadcast)
+  subject           String?
+  payloadJson       Json              // Structured payload
+  naturalSummary    String?           // Human-readable translation
+  correlationId     String
+
+  createdAt         DateTime          @default(now())
+
+  tenant            Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  mission           Mission           @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, missionId, createdAt])
+  @@index([correlationId])
+}
+
+/// Handoff of a task from one agent to another within a mission.
+model AgentHandoff {
+  id                String         @id @default(cuid())
+  tenantId          String
+  missionId         String
+  fromAgent         String
+  toAgent           String
+  taskJson          Json           // Task description + input
+  status            HandoffStatus  @default(PENDING)
+  acceptedAt        DateTime?
+  rejectedReason    String?
+  resultJson        Json?
+  correlationId     String
+
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  tenant            Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  mission           Mission        @relation(fields: [missionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, missionId])
+  @@index([status])
+}
+
+// ============================================================
+// Phase 5: Autonomous Ops — Self-Healing Loop
+// ============================================================
+
+enum AutoActionKind {
+  REMEDIATION
+  ROLLBACK
+  ESCALATION
+  QUARANTINE
+  RATE_ADJUST
+}
+
+enum AutoActionStatus {
+  EXECUTED
+  VERIFIED
+  REVERTED
+  FAILED
+}
+
+/// A self-healing action taken autonomously by the system.
+model AutoAction {
+  id                String             @id @default(cuid())
+  tenantId          String
+  missionId         String?
+  kind              AutoActionKind
+  targetType        String             // 'Connector' | 'Agent' | 'Pack' | 'Execution'
+  targetId          String
+  triggerReason     String             // Natural-language trigger
+  triggerRuleId     String?            // Policy/rule reference
+  actionJson        Json               // { action, parameters, reversible }
+  status            AutoActionStatus   @default(EXECUTED)
+  verificationJson  Json?              // Post-action check result
+  revertedAt        DateTime?
+  revertedByUserId  String?
+  revertWindowSec   Int                @default(600)  // Grace period for undo
+  correlationId     String
+
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  tenant            Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  mission           Mission?           @relation(fields: [missionId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status, createdAt])
+  @@index([targetType, targetId])
+}
+
+// ============================================================
+// Phase 5: FDS — Fraud Detection
+// ============================================================
+
+enum FDSSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum FDSAlertStatus {
+  OPEN
+  INVESTIGATING
+  BLOCKED
+  ESCALATED
+  DISMISSED
+  RESOLVED
+}
+
+/// FDS rule definition.
+model FDSRule {
+  id              String       @id @default(cuid())
+  tenantId        String
+  key             String
+  name            String
+  description     String?
+  enabled         Boolean      @default(true)
+  severity        FDSSeverity  @default(MEDIUM)
+  conditionsJson  Json         // Rule condition spec
+  actionJson      Json?        // Default action when matched
+  weight          Float        @default(1.0)  // For ML-assisted scoring adjustment
+
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  tenant          Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  alerts          FDSAlert[]
+
+  @@unique([tenantId, key])
+  @@index([tenantId, enabled])
+}
+
+/// FDS alert raised by a rule match or anomaly detection.
+model FDSAlert {
+  id              String          @id @default(cuid())
+  tenantId        String
+  ruleId          String?
+  severity        FDSSeverity
+  status          FDSAlertStatus  @default(OPEN)
+  subjectType     String          // 'Transaction' | 'User' | 'Account' | 'Connector'
+  subjectId       String
+  score           Float           // 0..1 risk score
+  summary         String
+  detailsJson     Json            // Full evidence payload
+  similarCasesJson Json?          // Pre-retrieved similar past alerts
+  resolvedByUserId String?
+  resolvedAt      DateTime?
+  resolutionJson  Json?           // { decision, comment, feedbackToModel }
+  correlationId   String
+
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  rule            FDSRule?        @relation(fields: [ruleId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, status, createdAt])
+  @@index([subjectType, subjectId])
+}
+
+// ============================================================
+// Phase 5: AP Agent — Accounts Payable
+// ============================================================
+
+enum APInvoiceStatus {
+  RECEIVED
+  PARSING
+  MATCHING
+  EXCEPTION
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  PAID
+}
+
+enum APMatchingResult {
+  FULL_MATCH        // All 3 (Invoice, PO, GR) match
+  PARTIAL_MATCH     // Some discrepancies
+  NO_MATCH
+  NOT_APPLICABLE
+}
+
+/// Accounts Payable invoice record.
+model APInvoice {
+  id                String             @id @default(cuid())
+  tenantId          String
+  invoiceNumber     String
+  vendorName        String
+  vendorId          String?
+  amount            Decimal            @db.Decimal(18, 2)
+  currency          String             @default("KRW")
+  invoiceDate       DateTime
+  dueDate           DateTime?
+  status            APInvoiceStatus    @default(RECEIVED)
+
+  // OCR + parsing
+  sourceUri         String?            // Original doc URI
+  parsedJson        Json?              // Extracted lines, tax, etc.
+  ocrConfidence     Float?
+
+  // Matching
+  matchingResult    APMatchingResult?
+  poReference       String?
+  grReference       String?
+  matchingDetailsJson Json?            // Line-by-line comparison
+  aiSuggestionJson  Json?              // Agent's recommendation
+
+  // Approval
+  approvedByUserId  String?
+  approvedAt        DateTime?
+  rejectedReason    String?
+  correlationId     String
+
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  tenant            Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, invoiceNumber])
+  @@index([tenantId, status, createdAt])
+  @@index([vendorId])
+}
+
+// ============================================================
+// Phase 6: Integration Harness — Capability Registry
+// ============================================================
+
+enum CapabilityKind {
+  CONNECTOR       // REST / Webhook / MCP Server
+  AGENT           // Autonomous agent (QA, Canary, FinOps, etc.)
+  ADAPTER         // Pluggable adapter (ML scoring, OCR, etc.)
+  TEMPLATE        // Pre-built workflow template
+  SKILL           // Reusable skill/function
+}
+
+enum AgentKernelType {
+  MCP             // MCP server protocol
+  REST            // REST-based agent
+  LOCAL           // In-process NestJS service
+  EXTERNAL        // External webhook
+}
+
+enum AgentStatus {
+  AVAILABLE
+  DEGRADED
+  UNAVAILABLE
+  DRAINING
+}
+
+/// Formal agent definition — first-class entity with capabilities schema.
+model AgentDefinition {
+  id                String          @id @default(cuid())
+  tenantId          String
+  key               String          // 'qa-agent', 'canary-agent', ...
+  name              String
+  description       String?
+  category          String          // 'operations' | 'development' | 'qa' | 'utility' | 'finops' | 'business'
+  version           String          @default("1.0.0")
+  status            AgentStatus     @default(AVAILABLE)
+  kernelType        AgentKernelType @default(LOCAL)
+
+  // Schema contracts
+  inputSchemaJson   Json            // JSON Schema for input
+  outputSchemaJson  Json            // JSON Schema for output
+  capabilitiesJson  Json            // Array of capability tags
+
+  // Runtime binding
+  kernelConfigJson  Json?           // { endpoint, command, args, ... }
+  defaultTimeoutSec Int             @default(60)
+  costPerInvocationUsd Decimal?     @db.Decimal(12, 6)
+
+  // Stats
+  totalInvocations  Int             @default(0)
+  lastInvokedAt     DateTime?
+  lastSuccessRate   Float?
+
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@index([tenantId, category, status])
+}
+
+/// Pluggable adapter registration (FDS ML, OCR, etc.).
+model AdapterRegistration {
+  id                String          @id @default(cuid())
+  tenantId          String
+  key               String          // 'ocr-textract', 'fds-ml-openai', ...
+  name              String
+  adapterType       String          // 'ocr' | 'ml-score' | 'embedding' | 'translation'
+  implementation    String          // 'mock' | 'tesseract' | 'textract' | 'openai' | 'heuristic' | 'http-model'
+  version           String          @default("1.0.0")
+  active            Boolean         @default(true)
+
+  inputSchemaJson   Json
+  outputSchemaJson  Json
+  configJson        Json?           // Adapter-specific config (endpoint, apiKey ref, etc.)
+
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@index([tenantId, adapterType, active])
+}
+
+/// Denormalized capability entry — unified view of everything Builder can use.
+model CapabilityBinding {
+  id                String          @id @default(cuid())
+  tenantId          String
+  kind              CapabilityKind
+  sourceType        String          // 'Connector' | 'AgentDefinition' | 'AdapterRegistration' | 'PackCapability'
+  sourceId          String          // FK to original entity
+  key               String          // e.g. 'connector:slack-webhook' or 'agent:qa-agent'
+  label             String          // Human-friendly name for Builder UI
+  category          String          // 'messaging' | 'deployment' | 'compliance' | ...
+  tags              String[]        // searchable tags
+  inputSchemaJson   Json?
+  outputSchemaJson  Json?
+  docsUrl           String?
+  active            Boolean         @default(true)
+
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  tenant            Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, key])
+  @@index([tenantId, kind, active])
+  @@index([sourceType, sourceId])
+}
+
+// ════════════════════════════════════════════════════════════════
+// Phase 6 Step 2 — Workflow Server Persistence
+// ════════════════════════════════════════════════════════════════
+
+enum WorkflowStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+  DELETED
+}
+
+/// Saved workflow definition — the primary entity for server-persisted workflows.
+model Workflow {
+  id              String           @id @default(cuid())
+  tenantId        String
+  /// Unique key within tenant (e.g. "daily-security-scan")
+  key             String
+  name            String
+  description     String?
+  /// Current status (DRAFT → PUBLISHED → ARCHIVED)
+  status          WorkflowStatus   @default(DRAFT)
+  /// OCC: incremented on every update, client must send current version to update
+  version         Int              @default(1)
+  /// Currently active version ID (points to the latest published WorkflowVersion)
+  activeVersionId String?
+  /// Tags for filtering/search
+  tags            String[]
+  /// Creator
+  createdById     String
+  /// Last editor
+  updatedById     String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  /// Soft delete
+  deletedAt       DateTime?
+
+  tenant          Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdBy       User             @relation("WorkflowCreatedBy", fields: [createdById], references: [id])
+  updatedBy       User?            @relation("WorkflowUpdatedBy", fields: [updatedById], references: [id])
+  versions        WorkflowVersion[]
+  nodes           WorkflowNodeDef[]
+  edges           WorkflowEdgeDef[]
+
+  @@unique([tenantId, key])
+  @@index([tenantId, status, updatedAt])
+  @@index([tenantId, createdById])
+}
+
+/// Immutable snapshot of a workflow at a specific point in time.
+/// Created on every publish or manual save-as-version action.
+model WorkflowVersion {
+  id              String           @id @default(cuid())
+  workflowId      String
+  /// Monotonically increasing version number per workflow
+  versionNumber   Int
+  /// Human-readable label (e.g. "v2 — Jira 연동 추가")
+  label           String?
+  /// Full snapshot of nodes as JSON (denormalized for fast restore)
+  nodesSnapshot   Json
+  /// Full snapshot of edges as JSON
+  edgesSnapshot   Json
+  /// Workflow-level settings snapshot
+  settingsSnapshot Json?
+  /// Who created this version
+  createdById     String
+  createdAt       DateTime         @default(now())
+
+  workflow        Workflow         @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  createdBy       User             @relation("WorkflowVersionCreatedBy", fields: [createdById], references: [id])
+
+  @@unique([workflowId, versionNumber])
+  @@index([workflowId, createdAt])
+}
+
+/// A single node definition within a saved workflow.
+/// Represents the "live" editable state (not a snapshot).
+model WorkflowNodeDef {
+  id              String           @id @default(cuid())
+  workflowId      String
+  /// Stable node key (matches builder canvas node ID)
+  nodeKey         String
+  /// Frontend UI type (schedule, web-search, ai-processing, etc.)
+  uiType          String
+  /// Display name
+  name            String
+  /// Execution order (1-based)
+  executionOrder  Int
+  /// Node configuration (all settings from the builder panel)
+  configJson      Json             @default("{}")
+  /// Explicit inputMapping overrides (JSON path references)
+  inputMappingJson Json?
+  /// Explicit dependency list (node keys)
+  dependsOn       String[]
+  /// Canvas position for visual layout
+  positionX       Float?
+  positionY       Float?
+
+  workflow        Workflow         @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@unique([workflowId, nodeKey])
+  @@index([workflowId, executionOrder])
+}
+
+/// An edge connecting two nodes within a saved workflow.
+model WorkflowEdgeDef {
+  id              String           @id @default(cuid())
+  workflowId      String
+  /// Source node key
+  fromNodeKey     String
+  /// Target node key
+  toNodeKey       String
+  /// Edge type
+  edgeType        String           @default("SEQUENCE")
+  /// Condition expression (for CONDITIONAL edges)
+  condition       String?
+  /// Label displayed on the edge
+  label           String?
+
+  workflow        Workflow         @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@unique([workflowId, fromNodeKey, toNodeKey])
+  @@index([workflowId])
+}
