@@ -36,6 +36,12 @@ export class HttpExceptionFilter implements ExceptionFilter {
       );
     }
 
+    // Guard: if response was already sent (e.g. @Res() + res.json()),
+    // do not attempt to send again — this would crash the process.
+    if (response.headersSent) {
+      return;
+    }
+
     response.status(status).json({
       statusCode: status,
       message,

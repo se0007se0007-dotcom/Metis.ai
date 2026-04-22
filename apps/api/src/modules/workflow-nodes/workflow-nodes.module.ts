@@ -36,6 +36,9 @@ import { SlackExecutor } from './executors/slack.executor';
 import { DataStorageExecutor } from './executors/data-storage.executor';
 import { LogMonitorExecutor } from './executors/log-monitor.executor';
 import { PentestExecutor } from './executors/pentest.executor';
+import { ScheduleExecutor } from './executors/schedule.executor';
+import { EmailSendExecutor } from './executors/email-send.executor';
+import { PassthroughExecutor } from './executors/passthrough.executor';
 
 @Module({
   imports: [ConfigModule, DatabaseModule, ConnectorModule, EmailModule],
@@ -52,6 +55,9 @@ import { PentestExecutor } from './executors/pentest.executor';
     SlackExecutor,
     DataStorageExecutor,
     LogMonitorExecutor,
+    ScheduleExecutor,
+    EmailSendExecutor,
+    PassthroughExecutor,
   ],
   exports: [WorkflowNodesService, PipelineEngine, NodeExecutorRegistry],
 })

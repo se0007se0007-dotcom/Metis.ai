@@ -62,8 +62,8 @@ export function useEventStream(opts: UseEventStreamOptions = {}): UseEventStream
     }
 
     // EventSource doesn't allow custom headers; encode token in query string.
-    const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000/v1';
-    const url = `${apiBase}/events/stream?access_token=${encodeURIComponent(token)}`;
+    // Use Next.js rewrite proxy to avoid CORS issues.
+    const url = `/api/events/stream?access_token=${encodeURIComponent(token)}`;
 
     try {
       const src = new EventSource(url, { withCredentials: true });

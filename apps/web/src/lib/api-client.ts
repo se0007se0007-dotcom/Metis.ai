@@ -3,7 +3,9 @@
  * Wraps fetch with auth headers, error handling, and base URL.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/v1';
+// Use Next.js rewrite proxy: /api/:path* → http://localhost:4000/v1/:path*
+// This avoids CORS issues since all requests stay on the same origin (localhost:3000).
+const API_BASE = '/api';
 
 interface ApiError {
   statusCode: number;

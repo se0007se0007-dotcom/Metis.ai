@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD, APP_INTERCEPTOR, APP_FILTER } from '@nestjs/core';
+import * as path from 'path';
 
 import { DatabaseModule } from './modules/database.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -34,7 +35,15 @@ import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true, envFilePath: '../../.env' }),
+    ConfigModule.forRoot({
+      isGlobal: true,
+      envFilePath: [
+        path.resolve(__dirname, '../../../.env'),   // from dist/ → monorepo root
+        path.resolve(process.cwd(), '.env'),        // CWD (if running from root)
+        '../../.env',                               // relative fallback
+        '.env',                                     // local fallback
+      ],
+    }),
     DatabaseModule,
     AuthModule,
     TenantModule,

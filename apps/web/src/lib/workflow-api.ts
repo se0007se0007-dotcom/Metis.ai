@@ -5,8 +5,9 @@
  * All requests include credentials for JWT cookie auth.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-const WF_BASE = `${API_BASE}/api/workflows`;
+// Use Next.js rewrite proxy (/api/:path* → http://localhost:4000/v1/:path*)
+// This avoids CORS issues since all requests stay on the same origin.
+const WF_BASE = '/api/workflows';
 
 // ── Types ──
 

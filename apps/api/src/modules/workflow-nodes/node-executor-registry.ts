@@ -87,6 +87,31 @@ export interface ConnectorMetadata {
   capabilities: string[];
 }
 
+// Generic node types that should fall back to category-based resolution
+const GENERIC_NODE_TYPES = new Set([
+  'api-call', 'custom', 'generic', 'unknown', 'notification',
+]);
+
+// Static alias mapping: "nodeType:category" or "nodeType" → registered executor key
+const NODE_TYPE_ALIASES: Record<string, string> = {
+  // notification type → email or slack
+  'notification': 'email-send:delivery',
+  'notification:delivery': 'email-send:delivery',
+  'notification:alert': 'slack-message:delivery',
+  // generic api-call with specific categories
+  'api-call:input': 'file-operation:input',
+  'api-call:output': 'file-operation:output',
+  'api-call:delivery': 'email-send:delivery',
+  'api-call:monitor': 'log-monitor:monitor',
+  'api-call:storage': 'data-storage:storage',
+  'api-call:search': 'web-search:search',
+  'api-call:schedule': 'schedule:schedule',
+  'api-call:trigger': 'schedule:trigger',
+  'api-call:inspection': 'ai-processing:inspection',
+  'api-call:analysis': 'ai-processing:analysis',
+  'api-call:pentest': 'ai-processing:pentest',
+};
+
 @Injectable()
 export class NodeExecutorRegistry implements OnModuleInit {
   private readonly logger = new Logger(NodeExecutorRegistry.name);
@@ -119,16 +144,47 @@ export class NodeExecutorRegistry implements OnModuleInit {
 
   /**
    * Find the best executor for a given node type + category combination.
+   *
+   * Resolution order:
+   *   1. Exact match: type:category (e.g. "schedule:schedule")
+   *   2. Type-only match: type (e.g. "schedule")
+   *   3. Category-as-type fallback: category:category (handles "api-call:schedule" → "schedule:schedule")
+   *   4. Category-only fallback: category (handles "api-call:schedule" → "schedule")
+   *   5. Alias mapping for common generic types
    */
   resolve(nodeType: string, category?: string): INodeExecutor | null {
-    // Try specific type:category first
+    // 1. Try specific type:category
     if (category) {
       const specific = this.typeMap.get(`${nodeType}:${category}`);
       if (specific?.length) return specific[0];
     }
-    // Fall back to type-only
+
+    // 2. Fall back to type-only
     const general = this.typeMap.get(nodeType);
-    return general?.[0] ?? null;
+    if (general?.length) return general[0];
+
+    // 3. If type is generic (api-call, custom, etc.), try category as type
+    if (category && GENERIC_NODE_TYPES.has(nodeType)) {
+      const byCat = this.typeMap.get(`${category}:${category}`);
+      if (byCat?.length) return byCat[0];
+
+      const catOnly = this.typeMap.get(category);
+      if (catOnly?.length) return catOnly[0];
+    }
+
+    // 4. Static alias mapping (works with or without category)
+    const aliasKey = category ? `${nodeType}:${category}` : nodeType;
+    const alias = NODE_TYPE_ALIASES[aliasKey] || NODE_TYPE_ALIASES[nodeType];
+    if (alias) {
+      const aliased = this.typeMap.get(alias);
+      if (aliased?.length) return aliased[0];
+    }
+
+    // 5. Fallback to passthrough executor for any unresolved types
+    const passthrough = this.executors.get('passthrough');
+    if (passthrough) return passthrough;
+
+    return null;
   }
 
   /**

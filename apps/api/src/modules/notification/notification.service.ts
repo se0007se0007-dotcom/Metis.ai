@@ -61,34 +61,34 @@ export class NotificationService {
     const tenantPrisma = withTenantIsolation(this.prisma, ctx);
 
     if (recipientType === 'custom' && customEmails?.length) {
-      // Security: validate email format and verify custom emails belong to tenant members
+      // Validate email format only — custom recipients can be external addresses
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      const validEmails = customEmails.filter(e => emailRegex.test(e));
+      const validEmails = customEmails.filter(e => emailRegex.test(e.trim()));
       if (validEmails.length === 0) {
         return { emails: [], names: [] };
       }
 
+      // Optionally resolve names for known tenant members
       try {
         const tenantMembers = await tenantPrisma.membership.findMany({
           where: { tenantId: ctx.tenantId },
           include: { user: { select: { email: true, name: true } } },
         });
-        const tenantEmails = new Set(tenantMembers.map(m => m.user.email.toLowerCase()));
-
-        const verified = validEmails.filter(e => tenantEmails.has(e.toLowerCase()));
-        const blocked = validEmails.filter(e => !tenantEmails.has(e.toLowerCase()));
-
-        if (blocked.length > 0) {
-          this.logger.warn(`Blocked ${blocked.length} non-tenant email(s): ${blocked.join(', ')}`);
-        }
+        const memberMap = new Map(
+          tenantMembers.map(m => [m.user.email.toLowerCase(), m.user.name || m.user.email]),
+        );
 
         return {
-          emails: verified,
-          names: verified.map(e => tenantMembers.find(m => m.user.email.toLowerCase() === e.toLowerCase())?.user.name || e),
+          emails: validEmails.map(e => e.trim()),
+          names: validEmails.map(e => memberMap.get(e.trim().toLowerCase()) || e.trim()),
         };
       } catch (error) {
-        this.logger.error(`Failed to verify custom emails: ${error}`);
-        return { emails: [], names: [] };
+        // If DB lookup fails, still allow sending to the validated emails
+        this.logger.warn(`Failed to resolve member names, using emails as-is: ${error}`);
+        return {
+          emails: validEmails.map(e => e.trim()),
+          names: validEmails.map(e => e.trim()),
+        };
       }
     }
 

@@ -14,6 +14,7 @@ import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import {
   INodeExecutor,
   NodeExecutionInput,
@@ -22,6 +23,7 @@ import {
   NodeExecutorRegistry,
   GeneratedFile,
 } from '../node-executor-registry';
+import { generateDashboardHtml, parseAnalysisContent, ReportData, SEVERITY_CONFIG } from './report-template';
 
 @Injectable()
 export class DocumentGenExecutor implements OnModuleInit, INodeExecutor {
@@ -37,7 +39,7 @@ export class DocumentGenExecutor implements OnModuleInit, INodeExecutor {
     private readonly registry: NodeExecutorRegistry,
     private readonly config: ConfigService,
   ) {
-    this.outputDir = this.config.get('OUTPUT_DIR') || '/tmp/metis-outputs';
+    this.outputDir = this.config.get('OUTPUT_DIR') || path.join(os.tmpdir(), 'metis-outputs');
   }
 
   onModuleInit() {
@@ -127,8 +129,8 @@ export class DocumentGenExecutor implements OnModuleInit, INodeExecutor {
   }
 
   /**
-   * Generate DOCX (Word) document
-   * Uses a simple XML-based approach without heavy dependencies
+   * Generate DOCX (Word) document — Professional format with tables, colors, structure
+   * Uses the docx npm package for rich formatting. Falls back to HTML if unavailable.
    */
   private async generateDocx(
     content: string,
@@ -138,66 +140,322 @@ export class DocumentGenExecutor implements OnModuleInit, INodeExecutor {
   ): Promise<GeneratedFile> {
     const fileName = `${baseName}.docx`;
     const filePath = path.join(outputDir, fileName);
+    const title = settings.reportTitle || 'Metis.AI 분석 보고서';
+    const parsed = parseAnalysisContent(content);
 
-    // Try to use docx npm package if available, otherwise generate simple OOXML
     try {
       const docx = require('docx');
-      const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } = docx;
+      const {
+        Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType,
+        Table, TableRow, TableCell, WidthType, BorderStyle, ShadingType,
+        Header, Footer, PageNumber, NumberFormat, TabStopPosition, TabStopType,
+      } = docx;
 
-      const sections = this.parseContentToSections(content);
       const children: any[] = [];
+      const SEV_COLORS: Record<string, string> = {
+        critical: 'DC2626', high: 'EA580C', medium: 'CA8A04', low: '2563EB', info: '6B7280',
+      };
+      const SEV_BG: Record<string, string> = {
+        critical: 'FEF2F2', high: 'FFF7ED', medium: 'FEFCE8', low: 'EFF6FF', info: 'F9FAFB',
+      };
+      const SEV_LABEL: Record<string, string> = {
+        critical: '심각', high: '높음', medium: '보통', low: '낮음', info: '참고',
+      };
 
-      // Title
+      // ── Cover / Title ──
       children.push(
+        new Paragraph({ spacing: { after: 600 } }),
         new Paragraph({
-          text: settings.reportTitle || 'Metis.AI 분석 보고서',
-          heading: HeadingLevel.TITLE,
+          children: [new TextRun({ text: title, size: 52, bold: true, color: '1E3A5F', font: 'Malgun Gothic' })],
           alignment: AlignmentType.CENTER,
+          spacing: { after: 100 },
         }),
         new Paragraph({
-          text: `생성일시: ${new Date().toLocaleString('ko-KR')}`,
+          children: [new TextRun({ text: settings.projectName || 'Metis.AI AgentOps Governance Platform', size: 24, color: '6B7280', font: 'Malgun Gothic' })],
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 400 },
+        }),
+        new Paragraph({
+          children: [new TextRun({ text: `생성일시: ${new Date().toLocaleString('ko-KR')}`, size: 20, color: '9CA3AF', font: 'Malgun Gothic' })],
+          alignment: AlignmentType.CENTER,
+          spacing: { after: 200 },
+        }),
+        new Paragraph({
+          children: [new TextRun({ text: '─'.repeat(60), color: '3B82F6', size: 16 })],
           alignment: AlignmentType.CENTER,
           spacing: { after: 400 },
         }),
       );
 
-      // Content sections
-      for (const section of sections) {
-        if (section.type === 'heading') {
+      // ── Executive Summary ──
+      const sevCounts = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+      for (const f of parsed.findings) sevCounts[f.severity]++;
+      const totalFindings = parsed.findings.length;
+      const urgentCount = sevCounts.critical + sevCounts.high;
+      const riskScore = parsed.kpis.find(k => k.label.includes('위험'))?.value || 0;
+
+      children.push(
+        new Paragraph({
+          text: '경영진 요약 (Executive Summary)',
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+        new Paragraph({
+          children: [
+            new TextRun({ text: `본 분석에서 총 `, size: 22, font: 'Malgun Gothic' }),
+            new TextRun({ text: `${totalFindings}개`, size: 22, bold: true, font: 'Malgun Gothic' }),
+            new TextRun({ text: `의 항목이 발견되었으며, 위험 점수는 `, size: 22, font: 'Malgun Gothic' }),
+            new TextRun({ text: `${riskScore}점/100점`, size: 22, bold: true, color: typeof riskScore === 'number' && riskScore >= 70 ? 'DC2626' : typeof riskScore === 'number' && riskScore >= 40 ? 'CA8A04' : '10B981', font: 'Malgun Gothic' }),
+            new TextRun({ text: `입니다.`, size: 22, font: 'Malgun Gothic' }),
+          ],
+          spacing: { after: 100 },
+        }),
+      );
+
+      if (urgentCount > 0) {
+        children.push(new Paragraph({
+          children: [
+            new TextRun({ text: `⚠ 즉시 조치가 필요한 심각/높음 등급 항목: ${urgentCount}건`, size: 22, bold: true, color: 'DC2626', font: 'Malgun Gothic' }),
+          ],
+          spacing: { after: 200 },
+        }));
+      }
+
+      // ── Summary Statistics Table ──
+      children.push(
+        new Paragraph({
+          text: '심각도 분포',
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 300, after: 150 },
+        }),
+      );
+
+      const statsRows = [
+        new TableRow({
+          tableHeader: true,
+          children: ['심각도', '건수', '비율'].map(h =>
+            new TableCell({
+              children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, size: 20, color: 'FFFFFF', font: 'Malgun Gothic' })], alignment: AlignmentType.CENTER })],
+              shading: { type: ShadingType.CLEAR, fill: '1E3A5F' },
+              width: { size: 33, type: WidthType.PERCENTAGE },
+            })
+          ),
+        }),
+        ...Object.entries(sevCounts).map(([sev, count]) =>
+          new TableRow({
+            children: [
+              new TableCell({
+                children: [new Paragraph({ children: [new TextRun({ text: `${SEVERITY_CONFIG[sev as keyof typeof SEVERITY_CONFIG]?.icon || ''} ${SEV_LABEL[sev]}`, size: 20, bold: true, color: SEV_COLORS[sev], font: 'Malgun Gothic' })], alignment: AlignmentType.CENTER })],
+                shading: { type: ShadingType.CLEAR, fill: SEV_BG[sev] },
+              }),
+              new TableCell({
+                children: [new Paragraph({ children: [new TextRun({ text: `${count}`, size: 20, font: 'Malgun Gothic' })], alignment: AlignmentType.CENTER })],
+              }),
+              new TableCell({
+                children: [new Paragraph({ children: [new TextRun({ text: totalFindings > 0 ? `${Math.round(count / totalFindings * 100)}%` : '0%', size: 20, font: 'Malgun Gothic' })], alignment: AlignmentType.CENTER })],
+              }),
+            ],
+          })
+        ),
+      ];
+
+      children.push(new Table({
+        rows: statsRows,
+        width: { size: 100, type: WidthType.PERCENTAGE },
+      }));
+
+      // ── Findings Detail ──
+      children.push(
+        new Paragraph({ spacing: { after: 200 } }),
+        new Paragraph({
+          text: '발견 항목 상세',
+          heading: HeadingLevel.HEADING_1,
+          spacing: { before: 400, after: 200 },
+        }),
+      );
+
+      // Findings table
+      if (parsed.findings.length > 0) {
+        const headerRow = new TableRow({
+          tableHeader: true,
+          children: ['ID', '심각도', '항목명', '카테고리'].map(h =>
+            new TableCell({
+              children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, size: 18, color: 'FFFFFF', font: 'Malgun Gothic' })], alignment: AlignmentType.CENTER })],
+              shading: { type: ShadingType.CLEAR, fill: '374151' },
+            })
+          ),
+        });
+
+        const dataRows = parsed.findings.map(f =>
+          new TableRow({
+            children: [
+              new TableCell({
+                children: [new Paragraph({ children: [new TextRun({ text: f.id, size: 18, font: 'Malgun Gothic' })], alignment: AlignmentType.CENTER })],
+                width: { size: 12, type: WidthType.PERCENTAGE },
+              }),
+              new TableCell({
+                children: [new Paragraph({ children: [new TextRun({ text: `${SEVERITY_CONFIG[f.severity]?.icon || ''} ${SEV_LABEL[f.severity]}`, size: 18, bold: true, color: SEV_COLORS[f.severity], font: 'Malgun Gothic' })], alignment: AlignmentType.CENTER })],
+                shading: { type: ShadingType.CLEAR, fill: SEV_BG[f.severity] },
+                width: { size: 15, type: WidthType.PERCENTAGE },
+              }),
+              new TableCell({
+                children: [new Paragraph({ children: [new TextRun({ text: f.title, size: 18, font: 'Malgun Gothic' })] })],
+                width: { size: 53, type: WidthType.PERCENTAGE },
+              }),
+              new TableCell({
+                children: [new Paragraph({ children: [new TextRun({ text: f.category || '일반', size: 18, color: '3B82F6', font: 'Malgun Gothic' })], alignment: AlignmentType.CENTER })],
+                width: { size: 20, type: WidthType.PERCENTAGE },
+              }),
+            ],
+          })
+        );
+
+        children.push(new Table({
+          rows: [headerRow, ...dataRows],
+          width: { size: 100, type: WidthType.PERCENTAGE },
+        }));
+      }
+
+      // ── Each Finding in Detail ──
+      for (const f of parsed.findings) {
+        const sev = SEVERITY_CONFIG[f.severity];
+        children.push(
+          new Paragraph({ spacing: { after: 100 } }),
+          new Paragraph({
+            children: [
+              new TextRun({ text: `${f.id} | `, size: 22, color: '9CA3AF', font: 'Malgun Gothic' }),
+              new TextRun({ text: `[${sev?.label || f.severity}] `, size: 22, bold: true, color: SEV_COLORS[f.severity], font: 'Malgun Gothic' }),
+              new TextRun({ text: f.title, size: 22, bold: true, font: 'Malgun Gothic' }),
+            ],
+            heading: HeadingLevel.HEADING_3,
+            spacing: { before: 200, after: 80 },
+          }),
+        );
+
+        // Description
+        for (const line of f.description.split('\n')) {
+          if (line.trim()) {
+            children.push(new Paragraph({
+              children: [new TextRun({ text: line.trim(), size: 20, font: 'Malgun Gothic' })],
+              spacing: { after: 40 },
+            }));
+          }
+        }
+
+        // Impact
+        if (f.impact) {
           children.push(new Paragraph({
-            text: section.text,
-            heading: HeadingLevel.HEADING_2,
-            spacing: { before: 200, after: 100 },
+            children: [
+              new TextRun({ text: '영향: ', size: 20, bold: true, color: 'EA580C', font: 'Malgun Gothic' }),
+              new TextRun({ text: f.impact, size: 20, font: 'Malgun Gothic' }),
+            ],
+            spacing: { before: 60, after: 40 },
           }));
-        } else {
-          // Split into paragraphs
-          for (const line of section.text.split('\n')) {
-            if (line.trim()) {
-              children.push(new Paragraph({
-                children: [new TextRun({ text: line, size: 22 })],
-                spacing: { after: 80 },
-              }));
-            }
+        }
+
+        // Recommendation
+        if (f.recommendation) {
+          children.push(new Paragraph({
+            children: [
+              new TextRun({ text: '권고 조치: ', size: 20, bold: true, color: '10B981', font: 'Malgun Gothic' }),
+              new TextRun({ text: f.recommendation, size: 20, font: 'Malgun Gothic' }),
+            ],
+            spacing: { before: 60, after: 40 },
+          }));
+        }
+
+        // Code snippet
+        if (f.codeSnippet) {
+          children.push(new Paragraph({
+            children: [new TextRun({ text: f.codeSnippet, size: 18, font: 'D2Coding' })],
+            shading: { type: ShadingType.CLEAR, fill: 'F1F5F9' },
+            spacing: { before: 80, after: 80 },
+          }));
+        }
+      }
+
+      // ── Recommendations Summary ──
+      const withReco = parsed.findings.filter(f => f.recommendation);
+      if (withReco.length > 0) {
+        children.push(
+          new Paragraph({ spacing: { after: 200 } }),
+          new Paragraph({
+            text: '권고 조치 요약 (Action Items)',
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 400, after: 200 },
+          }),
+        );
+
+        const priorities = [
+          { label: '즉시 조치 (Critical/High)', items: withReco.filter(f => f.severity === 'critical' || f.severity === 'high'), color: 'DC2626' },
+          { label: '단기 개선 (Medium)', items: withReco.filter(f => f.severity === 'medium'), color: 'CA8A04' },
+          { label: '장기 개선 (Low/Info)', items: withReco.filter(f => f.severity === 'low' || f.severity === 'info'), color: '2563EB' },
+        ];
+
+        for (const group of priorities) {
+          if (group.items.length === 0) continue;
+          children.push(new Paragraph({
+            children: [new TextRun({ text: `▎ ${group.label}`, size: 22, bold: true, color: group.color, font: 'Malgun Gothic' })],
+            spacing: { before: 150, after: 80 },
+          }));
+          for (const item of group.items) {
+            children.push(new Paragraph({
+              children: [
+                new TextRun({ text: `• ${item.title}: `, size: 20, bold: true, font: 'Malgun Gothic' }),
+                new TextRun({ text: item.recommendation || '', size: 20, font: 'Malgun Gothic' }),
+              ],
+              spacing: { after: 40 },
+              indent: { left: 360 },
+            }));
           }
         }
       }
 
+      // ── Build Document ──
       const doc = new Document({
+        styles: {
+          default: {
+            heading1: { run: { size: 32, bold: true, color: '1E3A5F', font: 'Malgun Gothic' } },
+            heading2: { run: { size: 26, bold: true, color: '374151', font: 'Malgun Gothic' } },
+            heading3: { run: { size: 22, bold: true, color: '1F2937', font: 'Malgun Gothic' } },
+          },
+        },
         sections: [{
-          properties: {},
+          properties: {
+            page: {
+              margin: { top: 1440, bottom: 1440, left: 1080, right: 1080 },
+            },
+          },
+          headers: {
+            default: new Header({
+              children: [new Paragraph({
+                children: [new TextRun({ text: `${title} — Metis.AI`, size: 16, color: '9CA3AF', font: 'Malgun Gothic' })],
+                alignment: AlignmentType.RIGHT,
+              })],
+            }),
+          },
+          footers: {
+            default: new Footer({
+              children: [new Paragraph({
+                children: [
+                  new TextRun({ text: 'Metis.AI AgentOps Governance Platform  |  ', size: 14, color: '9CA3AF', font: 'Malgun Gothic' }),
+                  new TextRun({ children: [PageNumber.CURRENT], size: 14, color: '9CA3AF' }),
+                  new TextRun({ text: ' / ', size: 14, color: '9CA3AF' }),
+                  new TextRun({ children: [PageNumber.TOTAL_PAGES], size: 14, color: '9CA3AF' }),
+                ],
+                alignment: AlignmentType.CENTER,
+              })],
+            }),
+          },
           children,
         }],
       });
 
       const buffer = await Packer.toBuffer(doc);
       fs.writeFileSync(filePath, buffer);
-    } catch {
-      // Fallback: generate as RTF-like text file with .docx extension
-      // In production, the docx package would be installed
-      this.logger.warn('docx package not available, generating text fallback');
-      const fallbackContent = this.formatAsText(content, settings);
-      fs.writeFileSync(filePath.replace('.docx', '.txt'), fallbackContent);
-      // Also generate HTML version which Word can open
+    } catch (e) {
+      // Fallback: generate professional HTML report (Word can open HTML)
+      this.logger.warn(`docx package not available (${(e as Error).message}), generating HTML dashboard fallback`);
       const htmlFile = await this.generateHtml(content, baseName, outputDir, settings);
       return { ...htmlFile, format: 'html' };
     }
@@ -282,7 +540,7 @@ export class DocumentGenExecutor implements OnModuleInit, INodeExecutor {
   }
 
   /**
-   * Generate HTML report
+   * Generate HTML report — Professional dashboard style
    */
   private async generateHtml(
     content: string,
@@ -293,41 +551,15 @@ export class DocumentGenExecutor implements OnModuleInit, INodeExecutor {
     const fileName = `${baseName}.html`;
     const filePath = path.join(outputDir, fileName);
 
-    const title = settings.reportTitle || 'Metis.AI 분석 보고서';
-    const sections = this.parseContentToSections(content);
+    const reportData: ReportData = {
+      title: settings.reportTitle || 'Metis.AI 분석 보고서',
+      subtitle: settings.projectName || settings.reportSubtitle || '',
+      projectName: settings.projectName,
+      generatedAt: new Date().toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' }),
+      rawContent: content,
+    };
 
-    let bodyHtml = '';
-    for (const section of sections) {
-      if (section.type === 'heading') {
-        bodyHtml += `<h2>${this.escapeHtml(section.text)}</h2>\n`;
-      } else {
-        bodyHtml += `<div class="section">${this.escapeHtml(section.text).replace(/\n/g, '<br>')}</div>\n`;
-      }
-    }
-
-    const html = `<!DOCTYPE html>
-<html lang="ko">
-<head>
-  <meta charset="UTF-8">
-  <title>${this.escapeHtml(title)}</title>
-  <style>
-    body { font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; max-width: 900px; margin: 0 auto; padding: 40px; color: #1a202c; line-height: 1.7; }
-    h1 { color: #1a365d; border-bottom: 3px solid #3182ce; padding-bottom: 12px; }
-    h2 { color: #2d3748; margin-top: 32px; border-left: 4px solid #3182ce; padding-left: 12px; }
-    .section { margin: 16px 0; padding: 12px; background: #f7fafc; border-radius: 6px; white-space: pre-wrap; font-size: 14px; }
-    .meta { color: #718096; font-size: 12px; margin-bottom: 24px; }
-    code { background: #edf2f7; padding: 2px 6px; border-radius: 3px; font-size: 13px; }
-    pre { background: #1a202c; color: #e2e8f0; padding: 16px; border-radius: 8px; overflow-x: auto; }
-    @media print { body { max-width: 100%; padding: 20px; } }
-  </style>
-</head>
-<body>
-  <h1>${this.escapeHtml(title)}</h1>
-  <div class="meta">생성일시: ${new Date().toLocaleString('ko-KR')} | Metis.AI Workflow Engine</div>
-  ${bodyHtml}
-</body>
-</html>`;
-
+    const html = generateDashboardHtml(reportData);
     fs.writeFileSync(filePath, html, 'utf-8');
 
     const stat = fs.statSync(filePath);

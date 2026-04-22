@@ -38,21 +38,23 @@ echo.
 
 :: ── 2. Set environment variables ──
 echo [2/7] Setting environment variables...
-set DATABASE_URL=postgresql://metis:metis_secret@localhost:5432/metis_dev
-set REDIS_URL=redis://localhost:6379
-set AUTH_SECRET=metis-dev-secret-key-change-in-production-2026
-set API_PORT=4000
-set API_PREFIX=/v1
-set CORS_ORIGIN=http://localhost:3000
-set WORKER_CONCURRENCY=5
-set LOG_LEVEL=debug
+set "DATABASE_URL=postgresql://metis:metis_secret@localhost:5432/metis_dev"
+set "REDIS_URL=redis://localhost:6379"
+set "AUTH_SECRET=metis-dev-secret-key-change-in-production-2026"
+set "API_PORT=4000"
+set "API_PREFIX=/v1"
+set "CORS_ORIGIN=http://localhost:3000"
+set "WORKER_CONCURRENCY=5"
+set "LOG_LEVEL=debug"
+:: API keys are loaded from .env file by NestJS ConfigModule.
+:: Do NOT set placeholders here — they override .env values.
+:: Edit the .env file in the project root to set your keys.
 echo    OK
 echo.
 
 :: ── 3. Start Docker (PostgreSQL + Redis) ──
-echo [3/7] Starting Docker infrastructure - PostgreSQL + Redis...
+echo [3/7] Starting Docker infrastructure...
 
-:: Remove old containers if they exist
 docker rm -f metis-postgres metis-redis >nul 2>&1
 
 docker compose -f infra/compose/docker-compose.yml up -d
@@ -62,7 +64,6 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-:: Wait for PostgreSQL to be ready (max 60 seconds)
 echo    Waiting for PostgreSQL to be ready...
 set /a PG_WAIT=0
 :wait_pg
@@ -71,16 +72,14 @@ if %errorlevel% neq 0 (
     set /a PG_WAIT+=2
     if %PG_WAIT% geq 60 (
         echo ERROR: PostgreSQL did not start within 60 seconds.
-        echo    Check Docker Desktop is running and has enough resources.
         pause
         exit /b 1
     )
     timeout /t 2 /nobreak >nul
     goto wait_pg
 )
-echo    OK - PostgreSQL ready (waited %PG_WAIT%s)
+echo    OK - PostgreSQL ready
 
-:: Wait for Redis to be ready
 echo    Checking Redis...
 docker exec metis-redis redis-cli ping >nul 2>&1
 if %errorlevel% neq 0 (
@@ -90,7 +89,7 @@ if %errorlevel% neq 0 (
 )
 echo.
 
-:: ── 4. Install dependencies (if needed) ──
+:: ── 4. Install dependencies ──
 echo [4/7] Installing dependencies...
 call pnpm install
 echo.
@@ -109,7 +108,7 @@ if %errorlevel% neq 0 (
 echo    [5b] Pushing schema to database...
 call pnpm --filter @metis/database push -- --accept-data-loss
 if %errorlevel% neq 0 (
-    echo ERROR: Database push failed. Check PostgreSQL connection.
+    echo ERROR: Database push failed.
     pause
     exit /b 1
 )
@@ -117,48 +116,65 @@ if %errorlevel% neq 0 (
 echo    [5c] Seeding database...
 call pnpm db:seed
 if %errorlevel% neq 0 (
-    echo    WARNING: Seed had issues (may already exist - continuing)
+    echo    WARNING: Seed had issues - may already exist, continuing
 )
 echo    OK - Database setup complete
 echo.
 
 :: ── 6. Build packages ──
 echo [6/7] Building shared packages...
-echo    Building @metis/database...
 call pnpm --filter @metis/database build
-echo    Building @metis/types...
 call pnpm --filter @metis/types build 2>nul
 echo    OK - Packages built
 echo.
 
-:: ── 7. Start all servers ──
-echo [7/7] Starting servers...
+:: ── 7. Kill stale processes and start servers ──
+echo [7/7] Cleaning up stale processes...
+
+taskkill /FI "WINDOWTITLE eq Metis API*" /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq Metis Worker*" /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq Metis Frontend*" /F >nul 2>&1
+
+for /f "tokens=5" %%p in ('netstat -aon 2^>nul ^| findstr ":4000 " ^| findstr "LISTENING"') do (
+    taskkill /PID %%p /F >nul 2>&1
+)
+for /f "tokens=5" %%p in ('netstat -aon 2^>nul ^| findstr ":3000 " ^| findstr "LISTENING"') do (
+    taskkill /PID %%p /F >nul 2>&1
+)
+
+timeout /t 2 /nobreak >nul
+echo    OK - Ports cleared
+echo.
+
+echo ============================================
+echo    Starting 3 servers in separate windows...
 echo.
 echo    API Server    : http://localhost:4000/v1/health
 echo    Swagger Docs  : http://localhost:4000/docs
 echo    Frontend      : http://localhost:3000
 echo    Login         : admin@metis.ai / metis1234
-echo.
-echo ============================================
-echo    Starting 3 servers in separate windows...
-echo    Close this window to stop all servers.
 echo ============================================
 echo.
 
-:: Start API server in new window
-start "Metis API - port 4000" cmd /k "cd /d %~dp0 && set DATABASE_URL=%DATABASE_URL% && set REDIS_URL=%REDIS_URL% && set AUTH_SECRET=%AUTH_SECRET% && set API_PORT=%API_PORT% && set API_PREFIX=%API_PREFIX% && set CORS_ORIGIN=%CORS_ORIGIN% && set LOG_LEVEL=%LOG_LEVEL% && pnpm --filter @metis/api dev"
+:: Child processes inherit all env vars from this parent process.
+:: No need to pass them explicitly.
+start "Metis API - port 4000" cmd /k "cd /d %~dp0 && pnpm --filter @metis/api dev"
 
-:: Wait for API to start
 echo Waiting for API server to start...
-timeout /t 5 /nobreak >nul
+timeout /t 10 /nobreak >nul
 
-:: Start Worker in new window
-start "Metis Worker" cmd /k "cd /d %~dp0 && set DATABASE_URL=%DATABASE_URL% && set REDIS_URL=%REDIS_URL% && set AUTH_SECRET=%AUTH_SECRET% && set WORKER_CONCURRENCY=%WORKER_CONCURRENCY% && pnpm --filter @metis/worker dev"
+echo Checking API health...
+curl -s http://localhost:4000/v1/health >nul 2>&1
+if %errorlevel% neq 0 (
+    echo    WARNING: API may still be starting...
+    timeout /t 5 /nobreak >nul
+) else (
+    echo    OK - API server responding
+)
 
-:: Start Frontend in new window
+start "Metis Worker" cmd /k "cd /d %~dp0 && pnpm --filter @metis/worker dev"
 start "Metis Frontend - port 3000" cmd /k "cd /d %~dp0 && pnpm --filter @metis/web dev"
 
-:: Wait and open browser
 timeout /t 8 /nobreak >nul
 echo.
 echo Opening browser...
@@ -171,10 +187,18 @@ echo    Press any key to STOP all servers...
 echo ============================================
 pause >nul
 
-:: Cleanup: kill all node processes started by this script
 echo.
 echo Stopping servers...
 taskkill /FI "WINDOWTITLE eq Metis API*" /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq Metis Worker*" /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq Metis Frontend*" /F >nul 2>&1
-echo Done.
+
+for /f "tokens=5" %%p in ('netstat -aon 2^>nul ^| findstr ":4000 " ^| findstr "LISTENING"') do (
+    taskkill /PID %%p /F >nul 2>&1
+)
+for /f "tokens=5" %%p in ('netstat -aon 2^>nul ^| findstr ":3000 " ^| findstr "LISTENING"') do (
+    taskkill /PID %%p /F >nul 2>&1
+)
+
+echo Done. All Metis servers stopped.
+pause

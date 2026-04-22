@@ -117,7 +117,7 @@ export class PipelineEngine {
       // Find executor
       const executor = this.registry.resolve(node.type, category);
       if (!executor) {
-        this.logger.warn(`No executor found for ${node.type}:${category}, skipping node ${node.name}`);
+        this.logger.warn(`No executor found for type="${node.type}" category="${category}", skipping node "${node.name}"`);
         const skipResult: PipelineNodeResult = {
           nodeId: node.id,
           nodeName: node.name,
@@ -137,6 +137,8 @@ export class PipelineEngine {
         pipelineData[node.id] = skipResult.output;
         continue;
       }
+
+      this.logger.log(`Node "${node.name}" (${node.type}:${category}) → executor: ${executor.executorKey}`);
 
       // Build execution input
       const execInput: NodeExecutionInput = {

@@ -25,9 +25,19 @@ export class CorrelationInterceptor implements NestInterceptor {
     // Attach to request for downstream usage (audit, logging)
     request.correlationId = correlationId;
 
+    // Set correlation header BEFORE handler runs, so it's safe even when
+    // the controller uses @Res() to send the response manually.
+    if (!response.headersSent) {
+      response.setHeader(CORRELATION_HEADER, correlationId);
+    }
+
     return next.handle().pipe(
       tap(() => {
-        response.setHeader(CORRELATION_HEADER, correlationId);
+        // Guard: if controller already sent response (e.g. @Res() + res.json()),
+        // headers are already committed — do not attempt to set again.
+        if (!response.headersSent) {
+          response.setHeader(CORRELATION_HEADER, correlationId);
+        }
       }),
     );
   }

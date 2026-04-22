@@ -176,23 +176,21 @@ export default function MarketPage() {
     }
   }
 
-  // Add local-only workflows (not duplicated on server)
-  if (!serverData || serverError) {
-    for (const lw of localWorkflows) {
-      if (!allWorkflows.find(w => w.id === lw.id)) {
-        allWorkflows.push({
-          id: lw.id,
-          name: lw.name,
-          description: lw.description || '',
-          status: lw.status || '초안',
-          nodeCount: lw.nodes?.length || 0,
-          tags: [],
-          updatedAt: lw.lastModified || lw.createdAt,
-          createdAt: lw.createdAt,
-          source: 'local',
-          nodes: lw.nodes,
-        });
-      }
+  // Add local-only workflows (always merge, not just on server error)
+  for (const lw of localWorkflows) {
+    if (!allWorkflows.find(w => w.id === lw.id)) {
+      allWorkflows.push({
+        id: lw.id,
+        name: lw.name,
+        description: lw.description || '',
+        status: lw.status || '초안',
+        nodeCount: lw.nodes?.length || 0,
+        tags: [],
+        updatedAt: lw.lastModified || lw.createdAt,
+        createdAt: lw.createdAt,
+        source: 'local',
+        nodes: lw.nodes,
+      });
     }
   }
 

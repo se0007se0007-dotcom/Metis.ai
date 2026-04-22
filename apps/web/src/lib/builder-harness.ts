@@ -425,7 +425,7 @@ export function applyRepair(nodes: TemplateNode[], action: RepairAction): Templa
       break;
     }
     case 'add-exit-node': {
-      result.push({ id: `node-repair-exit-${Date.now()}`, type: 'notification', name: '완료 알림', icon: '🔔', color: '#228B22', order: result.length + 1, actionType: 'write', failureAction: 'skip', description: 'Harness 자동 추가 종료', outputKeys: ['notification_sent'], settings: { channel: 'push', recipient: '', messageTemplate: '워크플로우 완료' } });
+      result.push({ id: `node-repair-exit-${Date.now()}`, type: 'notification', name: '완료 알림', icon: '🔔', color: '#228B22', order: result.length + 1, actionType: 'write', failureAction: 'skip', description: 'Harness 자동 추가 종료', outputKeys: ['notification_sent'], settings: { notifyChannel: 'email', channel: 'email', recipientType: 'me', notifyTemplate: 'success', slackChannel: '#general', customRecipients: '', messageTemplate: '워크플로우 완료' } });
       break;
     }
     case 'add-monitor': {

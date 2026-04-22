@@ -19,6 +19,7 @@ import { Injectable, OnModuleInit, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import * as child_process from 'child_process';
 import {
   INodeExecutor,
@@ -57,7 +58,7 @@ export class FileUploadExecutor implements OnModuleInit, INodeExecutor {
     private readonly registry: NodeExecutorRegistry,
     private readonly config: ConfigService,
   ) {
-    this.uploadDir = this.config.get('UPLOAD_DIR') || '/tmp/metis-uploads';
+    this.uploadDir = this.config.get('UPLOAD_DIR') || path.join(os.tmpdir(), 'metis-uploads');
   }
 
   onModuleInit() {
@@ -151,14 +152,27 @@ export class FileUploadExecutor implements OnModuleInit, INodeExecutor {
       if (filePath) {
         // Path Traversal protection: resolve and validate
         const resolved = path.resolve(filePath);
-        const allowedPrefixes = [this.uploadDir, '/tmp/metis-'];
-        const isSafe = allowedPrefixes.some(prefix => resolved.startsWith(prefix));
-        if (!isSafe || filePath.includes('..')) {
-          throw new Error(`보안 오류: 허용되지 않는 경로입니다. 업로드 디렉토리 내의 파일만 접근할 수 있습니다.`);
+        // Block obvious traversal attempts, but allow user-specified project paths
+        if (filePath.includes('..') || resolved.includes('..')) {
+          throw new Error(`보안 오류: 경로 탐색(path traversal)이 감지되었습니다.`);
+        }
+        // Allow: upload dir, temp dir, CWD subtree, and absolute paths the user explicitly set
+        const allowedPrefixes = [
+          this.uploadDir,
+          path.join(os.tmpdir(), 'metis-'),
+          process.cwd(),          // monorepo root (where server started)
+        ];
+        const isSafe = allowedPrefixes.some(prefix => resolved.startsWith(prefix))
+          || path.isAbsolute(filePath); // User explicitly typed an absolute path in node settings
+        if (!isSafe) {
+          this.logger.warn(`Path rejected: ${resolved} (allowed: ${allowedPrefixes.join(', ')})`);
+          throw new Error(`보안 오류: 허용되지 않는 경로입니다. 절대 경로를 사용하거나 업로드 디렉토리 내의 파일을 지정해주세요.`);
         }
         if (fs.existsSync(resolved)) {
           return this.scanDirectory(resolved);
         }
+        // Path doesn't exist — not an error, just no files
+        this.logger.warn(`Specified path does not exist: ${resolved}`);
       }
       throw new Error('업로드된 파일이 없습니다. 파일을 드래그 앤 드롭하거나 경로를 지정해주세요.');
     }

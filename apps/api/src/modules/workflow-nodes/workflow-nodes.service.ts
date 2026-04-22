@@ -12,6 +12,7 @@ import { PipelineEngine, PipelineExecutionRequest, PipelineResult } from './pipe
 import { EmailService } from '../email/email.service';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 
 @Injectable()
 export class WorkflowNodesService {
@@ -24,7 +25,7 @@ export class WorkflowNodesService {
     private readonly pipeline: PipelineEngine,
     private readonly emailService: EmailService,
   ) {
-    this.uploadDir = process.env.UPLOAD_DIR || '/tmp/metis-uploads';
+    this.uploadDir = process.env.UPLOAD_DIR || path.join(os.tmpdir(), 'metis-uploads');
     if (!fs.existsSync(this.uploadDir)) {
       fs.mkdirSync(this.uploadDir, { recursive: true });
     }
@@ -75,7 +76,7 @@ export class WorkflowNodesService {
    * Get download path for a generated file
    */
   getFilePath(sessionDir: string, fileName: string): string | null {
-    const outputDir = process.env.OUTPUT_DIR || '/tmp/metis-outputs';
+    const outputDir = process.env.OUTPUT_DIR || path.join(os.tmpdir(), 'metis-outputs');
     const filePath = path.join(outputDir, sessionDir, fileName);
     if (fs.existsSync(filePath)) return filePath;
     // Also check upload dir

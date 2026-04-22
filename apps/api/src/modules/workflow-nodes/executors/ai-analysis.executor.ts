@@ -160,6 +160,13 @@ export class AIAnalysisExecutor implements OnModuleInit, INodeExecutor {
 
   onModuleInit() {
     this.registry.register(this);
+    // Log API key availability (not the key itself)
+    const anthKey = this.anthropicApiKey;
+    const oaiKey = this.openaiApiKey;
+    this.logger.log(
+      `API Keys: Anthropic=${anthKey ? `...${anthKey.slice(-6)}` : 'NOT SET'}, ` +
+      `OpenAI=${oaiKey ? `...${oaiKey.slice(-6)}` : 'NOT SET'}`,
+    );
   }
 
   async execute(input: NodeExecutionInput): Promise<NodeExecutionOutput> {
@@ -299,6 +306,7 @@ ${previousOutput.slice(0, 150000)}`;
 
   /**
    * Call LLM API (Anthropic Claude or OpenAI GPT)
+   * Auto-fallback: if primary API fails (credit exhausted, rate limit, etc.), try the other.
    */
   private async callLLM(
     prompt: string,
@@ -306,14 +314,57 @@ ${previousOutput.slice(0, 150000)}`;
     maxTokens: number,
     temperature: number,
   ): Promise<string> {
-    // Determine which API to use
-    if (model.startsWith('claude') || model.startsWith('anthropic')) {
-      return this.callAnthropic(prompt, model, maxTokens, temperature);
-    } else if (model.startsWith('gpt') || model.startsWith('o3') || model.startsWith('o1')) {
-      return this.callOpenAI(prompt, model, maxTokens, temperature);
+    const isAnthropicModel = model.startsWith('claude') || model.startsWith('anthropic');
+    const isOpenAIModel = model.startsWith('gpt') || model.startsWith('o3') || model.startsWith('o1');
+
+    // Try primary API
+    try {
+      if (isOpenAIModel) {
+        return await this.callOpenAI(prompt, model, maxTokens, temperature);
+      }
+      // Default: try Anthropic first
+      if (this.anthropicApiKey) {
+        return await this.callAnthropic(prompt, isAnthropicModel ? model : 'claude-sonnet-4-6', maxTokens, temperature);
+      }
+    } catch (primaryErr) {
+      const errMsg = (primaryErr as Error).message || '';
+      this.logger.warn(`Primary LLM API failed: ${errMsg.slice(0, 200)}`);
+
+      // Check if it's a retryable error (credit, rate limit, etc.) — try fallback
+      const isRetryable = /credit|balance|quota|rate.?limit|429|402|400|503/i.test(errMsg);
+      if (!isRetryable) throw primaryErr;
+
+      this.logger.log('Attempting fallback to alternate LLM provider...');
     }
-    // Default to Anthropic
-    return this.callAnthropic(prompt, 'claude-sonnet-4-6', maxTokens, temperature);
+
+    // Fallback: try the other provider
+    try {
+      if (!isOpenAIModel && this.openaiApiKey) {
+        this.logger.log('Falling back to OpenAI GPT-4o...');
+        return await this.callOpenAI(prompt, 'gpt-4o', maxTokens, temperature);
+      }
+      if (isOpenAIModel && this.anthropicApiKey) {
+        this.logger.log('Falling back to Anthropic Claude...');
+        return await this.callAnthropic(prompt, 'claude-sonnet-4-6', maxTokens, temperature);
+      }
+    } catch (fallbackErr) {
+      this.logger.error(`Fallback LLM API also failed: ${(fallbackErr as Error).message?.slice(0, 200)}`);
+      throw new Error(
+        `모든 AI API 호출이 실패했습니다.\n`
+        + `1차 시도: ${isOpenAIModel ? 'OpenAI' : 'Anthropic'} — 실패\n`
+        + `2차 시도: ${isOpenAIModel ? 'Anthropic' : 'OpenAI'} — 실패\n\n`
+        + `API 키와 크레딧 잔액을 확인하세요.\n`
+        + `- Anthropic: https://console.anthropic.com/settings/billing\n`
+        + `- OpenAI: https://platform.openai.com/account/billing`
+      );
+    }
+
+    // No fallback API key available
+    throw new Error(
+      `AI API 호출 실패. 대체 API 키가 설정되지 않았습니다.\n`
+      + `현재 설정: Anthropic=${this.anthropicApiKey ? '있음' : '없음'}, OpenAI=${this.openaiApiKey ? '있음' : '없음'}\n`
+      + `.env 파일에서 ANTHROPIC_API_KEY 또는 OPENAI_API_KEY를 확인하세요.`
+    );
   }
 
   private async callAnthropic(

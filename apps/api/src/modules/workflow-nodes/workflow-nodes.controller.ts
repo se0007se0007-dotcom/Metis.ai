@@ -125,7 +125,7 @@ export class WorkflowNodesController {
 
     return {
       executionId,
-      streamUrl: `/api/workflow-nodes/stream/${executionId}`,
+      streamUrl: `/v1/api/workflow-nodes/stream/${executionId}`,
       status: 'STARTED',
     };
   }

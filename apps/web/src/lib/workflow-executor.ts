@@ -88,8 +88,10 @@ export interface ConnectorMetadata {
 
 // ── API Base URL ──
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:4000';
-const WF_API = `${API_BASE}/api/workflow-nodes`;
+// Use Next.js rewrite proxy: /api/:path* → http://localhost:4000/v1/:path*
+// Backend controller is @Controller('api/workflow-nodes') → route /v1/api/workflow-nodes
+// Through rewrite: /api/api/workflow-nodes → /v1/api/workflow-nodes
+const WF_API = '/api/api/workflow-nodes';
 
 /** Build common headers with auth token and CSRF */
 function buildHeaders(contentType?: string): Record<string, string> {
@@ -210,7 +212,12 @@ export async function executePipelineAsync(
   const { executionId, streamUrl } = await response.json();
 
   // Connect to SSE stream
-  const eventSource = new EventSource(`${API_BASE}${streamUrl}`);
+  // streamUrl from server is like /v1/api/workflow-nodes/stream/xxx
+  // Convert to /api/... so it goes through Next.js rewrite proxy
+  const proxyStreamUrl = streamUrl.startsWith('/v1/')
+    ? '/api/' + streamUrl.slice(4)
+    : streamUrl;
+  const eventSource = new EventSource(proxyStreamUrl);
 
   eventSource.onmessage = (event) => {
     try {
@@ -301,7 +308,7 @@ export async function executeDraftViaResolution(
     dependsOn: n.settings?.dependsOn || [],
   }));
 
-  const response = await fetch(`${API_BASE}/api/workflows/execute-draft`, {
+  const response = await fetch(`/api/workflows/execute-draft`, {
     method: 'POST',
     headers: buildHeaders('application/json'),
     credentials: 'include',
@@ -352,7 +359,7 @@ export async function resolveNodesPreview(
     config: n.settings,
   }));
 
-  const response = await fetch(`${API_BASE}/api/workflows/resolve-nodes`, {
+  const response = await fetch('/api/workflows/resolve-nodes', {
     method: 'POST',
     headers: buildHeaders('application/json'),
     credentials: 'include',

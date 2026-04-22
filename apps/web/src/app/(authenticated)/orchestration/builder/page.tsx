@@ -40,10 +40,12 @@ import {
   type UploadedFile as BackendUploadedFile,
 } from '@/lib/workflow-executor';
 import { storePendingFiles, getPendingFiles, clearPendingFiles } from '@/lib/pending-file-store';
+import { buildProfessionalHtmlReport, buildProfessionalWordDoc } from '@/lib/report-utils';
 import {
   createWorkflow,
   getWorkflow,
   updateWorkflow,
+  listWorkflows,
   publishWorkflow,
   generateWorkflowKey,
   type WorkflowDetail,
@@ -347,16 +349,16 @@ function simulateNodeExecution(node: WorkflowNode, previousNodes?: WorkflowNode[
         const langDisplay = languages.length > 0 ? languages.map((l: any) => l.language || l).join(', ') : 'TypeScript, JavaScript';
 
         const vulnFindings = isPentest ? [
-          { id: 'PT-001', severity: 'CRITICAL', cvss: '9.8', cwe: 'CWE-89', name: 'SQL Injection (Raw Query)', file: fileList[0] || 'src/modules/api.ts', line: 42, desc: 'Prisma $queryRaw에 사용자 입력이 직접 삽입되어 SQL Injection 가능', fix: 'parameterized query 사용 ($queryRaw`...${Prisma.sql}`)' },
-          { id: 'PT-002', severity: 'HIGH', cvss: '8.2', cwe: 'CWE-287', name: '인증 우회 (JWT alg:none)', file: fileList[1] || 'src/auth/jwt.ts', line: 18, desc: 'JWT 검증 시 알고리즘 고정 미비 — alg:none 공격 가능', fix: 'algorithms: ["HS256"] 옵션 명시' },
-          { id: 'PT-003', severity: 'HIGH', cvss: '7.5', cwe: 'CWE-639', name: 'IDOR (수평 권한 상승)', file: fileList[2] || 'src/controllers/user.ts', line: 65, desc: 'userId 파라미터 변조로 타 사용자 데이터 접근 가능', fix: 'tenantId + userId 복합 검증 적용' },
-          { id: 'PT-004', severity: 'MEDIUM', cvss: '6.1', cwe: 'CWE-79', name: 'Stored XSS', file: fileList[3] || 'src/views/profile.tsx', line: 112, desc: 'dangerouslySetInnerHTML로 사용자 입력 렌더링', fix: 'DOMPurify.sanitize() 적용' },
-          { id: 'PT-005', severity: 'MEDIUM', cvss: '5.3', cwe: 'CWE-798', name: '하드코딩된 API 키', file: fileList[4] || 'src/config/secrets.ts', line: 8, desc: '소스코드 내 API 키 직접 포함', fix: '환경변수 또는 시크릿 매니저 사용' },
+          { id: 'PT-001', severity: 'CRITICAL', cvss: '9.8', cwe: 'CWE-89', name: 'SQL Injection (Raw Query)', file: fileList[0] || 'src/modules/api.ts', line: 42, desc: 'Prisma $queryRaw에 사용자 입력이 직접 삽입되어 SQL Injection 가능', risk: '공격자가 데이터베이스 전체 데이터를 탈취하거나 삭제할 수 있으며, 인증 우회를 통한 관리자 권한 획득 가능', fix: 'parameterized query 사용 ($queryRaw`...${Prisma.sql}`)' },
+          { id: 'PT-002', severity: 'HIGH', cvss: '8.2', cwe: 'CWE-287', name: '인증 우회 (JWT alg:none)', file: fileList[1] || 'src/auth/jwt.ts', line: 18, desc: 'JWT 검증 시 알고리즘 고정 미비 — alg:none 공격 가능', risk: '공격자가 임의의 JWT 토큰을 생성하여 타 사용자 또는 관리자로 위장 가능, 전체 시스템 접근 권한 탈취 위험', fix: 'algorithms: ["HS256"] 옵션 명시' },
+          { id: 'PT-003', severity: 'HIGH', cvss: '7.5', cwe: 'CWE-639', name: 'IDOR (수평 권한 상승)', file: fileList[2] || 'src/controllers/user.ts', line: 65, desc: 'userId 파라미터 변조로 타 사용자 데이터 접근 가능', risk: '멀티테넌트 환경에서 타 조직의 민감 데이터 유출 가능, 개인정보보호법 위반 및 신뢰도 하락', fix: 'tenantId + userId 복합 검증 적용' },
+          { id: 'PT-004', severity: 'MEDIUM', cvss: '6.1', cwe: 'CWE-79', name: 'Stored XSS', file: fileList[3] || 'src/views/profile.tsx', line: 112, desc: 'dangerouslySetInnerHTML로 사용자 입력 렌더링', risk: '사용자 브라우저에서 악성 스크립트 실행, 세션 탈취 및 피싱 공격 수행 가능', fix: 'DOMPurify.sanitize() 적용' },
+          { id: 'PT-005', severity: 'MEDIUM', cvss: '5.3', cwe: 'CWE-798', name: '하드코딩된 API 키', file: fileList[4] || 'src/config/secrets.ts', line: 8, desc: '소스코드 내 API 키 직접 포함', risk: '소스코드 유출 시 외부 서비스 API 키 노출, 과금 폭탄 및 서비스 악용 가능', fix: '환경변수 또는 시크릿 매니저 사용' },
         ] : [
-          { id: 'SA-001', severity: 'HIGH', cvss: '8.0', cwe: 'CWE-78', name: 'OS Command Injection', file: fileList[0] || 'src/utils/exec.ts', line: 23, desc: 'child_process.exec에 사용자 입력 전달', fix: 'execFile + 인자 분리 사용' },
-          { id: 'SA-002', severity: 'HIGH', cvss: '7.5', cwe: 'CWE-22', name: 'Path Traversal', file: fileList[1] || 'src/file/handler.ts', line: 45, desc: '../ 패턴으로 상위 디렉토리 파일 접근 가능', fix: 'path.resolve() + 허용 디렉토리 검증' },
-          { id: 'SA-003', severity: 'MEDIUM', cvss: '6.5', cwe: 'CWE-918', name: 'SSRF', file: fileList[2] || 'src/proxy/fetch.ts', line: 31, desc: '사용자 제공 URL로 내부 네트워크 요청 가능', fix: 'URL allowlist + 내부 IP 블록' },
-          { id: 'SA-004', severity: 'LOW', cvss: '3.7', cwe: 'CWE-327', name: '취약한 해시 (MD5)', file: fileList[3] || 'src/utils/hash.ts', line: 12, desc: '비밀번호 해싱에 MD5 사용', fix: 'bcrypt 또는 argon2 적용' },
+          { id: 'SA-001', severity: 'HIGH', cvss: '8.0', cwe: 'CWE-78', name: 'OS Command Injection', file: fileList[0] || 'src/utils/exec.ts', line: 23, desc: 'child_process.exec에 사용자 입력 전달', risk: '서버에서 임의 명령 실행 가능, 시스템 완전 장악 및 내부 네트워크 침투 발판', fix: 'execFile + 인자 분리 사용' },
+          { id: 'SA-002', severity: 'HIGH', cvss: '7.5', cwe: 'CWE-22', name: 'Path Traversal', file: fileList[1] || 'src/file/handler.ts', line: 45, desc: '../ 패턴으로 상위 디렉토리 파일 접근 가능', risk: '서버의 /etc/passwd, .env 등 민감 파일 노출, 자격증명 탈취 가능', fix: 'path.resolve() + 허용 디렉토리 검증' },
+          { id: 'SA-003', severity: 'MEDIUM', cvss: '6.5', cwe: 'CWE-918', name: 'SSRF', file: fileList[2] || 'src/proxy/fetch.ts', line: 31, desc: '사용자 제공 URL로 내부 네트워크 요청 가능', risk: '내부 API/메타데이터 서비스 접근, 클라우드 환경에서 IAM 자격증명 탈취 가능', fix: 'URL allowlist + 내부 IP 블록' },
+          { id: 'SA-004', severity: 'LOW', cvss: '3.7', cwe: 'CWE-327', name: '취약한 해시 (MD5)', file: fileList[3] || 'src/utils/hash.ts', line: 12, desc: '비밀번호 해싱에 MD5 사용', risk: 'Rainbow table 공격으로 사용자 비밀번호 복원 가능, 대규모 계정 탈취 위험', fix: 'bcrypt 또는 argon2 적용' },
         ];
 
         const critCount = vulnFindings.filter(v => v.severity === 'CRITICAL').length;
@@ -377,6 +379,7 @@ function simulateNodeExecution(node: WorkflowNode, previousNodes?: WorkflowNode[
           pentestBody += `  위험도: ${v.severity} | CVSS: ${v.cvss} | ${v.cwe}\n`;
           pentestBody += `  위치: ${v.file}:${v.line}\n`;
           pentestBody += `  설명: ${v.desc}\n`;
+          pentestBody += `  위험성: ${v.risk}\n`;
           pentestBody += `  수정 방안: ${v.fix}\n\n`;
         }
 
@@ -773,7 +776,7 @@ ${searchArticles.map((a, i) => {
       const category = node.settings.stepCategory || '';
 
       if (category === 'output' && pipelineData.length > 0) {
-        // Output node: generate actual downloadable document
+        // Output node: generate actual downloadable document using shared report-utils
         const fmt = node.settings.outputFormat || 'html';
         const tpl = node.settings.reportTemplate || 'security-audit';
         const tplLabels: Record<string, string> = { 'security-audit': '보안 감사 보고서', 'code-review': '코드 리뷰 보고서', 'executive-summary': '경영진 요약', 'technical-detail': '기술 상세 보고서', 'custom': '사용자 정의 보고서' };
@@ -784,142 +787,22 @@ ${searchArticles.map((a, i) => {
         const baseName = node.settings.fileNamePattern || 'metis-report';
         const fileName = node.settings.includeTimestamp !== false ? `${baseName}-${timestamp}${fmtExts[fmt] || '.txt'}` : `${baseName}${fmtExts[fmt] || '.txt'}`;
 
-        // Build document content - check for pentest/security findings upstream
+        // Look for structured findings from upstream AI processing nodes
         const pentestNode = findUpstream('ai-processing');
-        const pentestFindings = pentestNode?.executionResult?.details?.findings || [];
-        const vulnStats = pentestNode?.executionResult?.details?.vulnStats || null;
-        const hasPentestData = pentestFindings.length > 0 || (pipelineData.includes('CRITICAL') && pipelineData.includes('CWE-'));
+        const structuredFindings = pentestNode?.executionResult?.details?.findings || null;
+        const tplLabel = tplLabels[tpl] || '보안 감사 보고서';
+        const projectName = node.settings.projectName || '';
 
-        let fileContent: string;
-        if (fmt === 'html' || fmt === 'pdf' || fmt === 'docx') {
-          const severityColors: Record<string, string> = { CRITICAL: '#dc2626', HIGH: '#ea580c', MEDIUM: '#ca8a04', LOW: '#16a34a' };
-
-          if (hasPentestData && pentestFindings.length > 0) {
-            // Generate structured security report HTML
-            const findingsHtml = pentestFindings.map((v: any) => `
-              <div style="border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;border-left:4px solid ${severityColors[v.severity] || '#6b7280'};">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-                  <strong style="font-size:15px;color:#1f2937;">[${v.id}] ${v.name}</strong>
-                  <span style="background:${severityColors[v.severity] || '#6b7280'};color:#fff;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:bold;">${v.severity}</span>
-                </div>
-                <table style="width:100%;font-size:13px;color:#374151;border-collapse:collapse;">
-                  <tr><td style="padding:4px 8px;color:#6b7280;width:100px;">CVSS</td><td style="padding:4px 8px;font-weight:600;">${v.cvss}</td></tr>
-                  <tr><td style="padding:4px 8px;color:#6b7280;">CWE</td><td style="padding:4px 8px;">${v.cwe}</td></tr>
-                  <tr><td style="padding:4px 8px;color:#6b7280;">위치</td><td style="padding:4px 8px;font-family:monospace;">${v.file}:${v.line}</td></tr>
-                  <tr><td style="padding:4px 8px;color:#6b7280;">설명</td><td style="padding:4px 8px;">${v.desc}</td></tr>
-                  <tr><td style="padding:4px 8px;color:#6b7280;">수정 방안</td><td style="padding:4px 8px;color:#059669;font-weight:500;">${v.fix}</td></tr>
-                </table>
-              </div>`).join('');
-
-            const statsHtml = vulnStats ? `
-              <div style="display:flex;gap:12px;margin-bottom:24px;">
-                <div style="flex:1;background:#fef2f2;border-radius:8px;padding:16px;text-align:center;">
-                  <div style="font-size:28px;font-weight:bold;color:#dc2626;">${vulnStats.critical}</div>
-                  <div style="font-size:12px;color:#991b1b;">CRITICAL</div>
-                </div>
-                <div style="flex:1;background:#fff7ed;border-radius:8px;padding:16px;text-align:center;">
-                  <div style="font-size:28px;font-weight:bold;color:#ea580c;">${vulnStats.high}</div>
-                  <div style="font-size:12px;color:#9a3412;">HIGH</div>
-                </div>
-                <div style="flex:1;background:#fefce8;border-radius:8px;padding:16px;text-align:center;">
-                  <div style="font-size:28px;font-weight:bold;color:#ca8a04;">${vulnStats.medium}</div>
-                  <div style="font-size:12px;color:#854d0e;">MEDIUM</div>
-                </div>
-                <div style="flex:1;background:#f0fdf4;border-radius:8px;padding:16px;text-align:center;">
-                  <div style="font-size:28px;font-weight:bold;color:#16a34a;">${vulnStats.low}</div>
-                  <div style="font-size:12px;color:#166534;">LOW</div>
-                </div>
-              </div>` : '';
-
-            fileContent = `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>${tplLabels[tpl] || '보안 분석 보고서'}</title>
-<style>body{font-family:'Segoe UI','Apple SD Gothic Neo',sans-serif;max-width:900px;margin:40px auto;padding:20px;color:#1a1a1a;line-height:1.6}
-h1{color:#1e40af;border-bottom:3px solid #3b82f6;padding-bottom:12px;font-size:24px}
-h2{color:#374151;font-size:18px;margin-top:32px;border-bottom:1px solid #e5e7eb;padding-bottom:8px}
-.meta{color:#6b7280;font-size:13px;margin-bottom:24px;background:#f8fafc;padding:12px;border-radius:8px}
-.roadmap{background:#eff6ff;border-radius:8px;padding:16px;margin-top:24px}
-.roadmap h3{margin:0 0 8px;color:#1e40af;font-size:15px}
-.roadmap ul{margin:0;padding-left:20px}
-.roadmap li{margin:4px 0;font-size:13px}
-</style></head><body>
-<h1>🛡️ ${tplLabels[tpl] || '보안 취약점 진단 보고서'}</h1>
-<div class="meta">
-  생성: ${new Date().toLocaleString('ko-KR')} | Metis.AI 자동 생성<br/>
-  분석 모델: ${pentestNode?.settings?.model || 'claude-sonnet-4.6'} |
-  분석 파일: ${pentestNode?.executionResult?.details?.fileCount || '다수'}개 |
-  언어: ${pentestNode?.executionResult?.details?.languages || 'N/A'}
-</div>
-<h2>📊 취약점 통계</h2>
-${statsHtml}
-<h2>🔍 발견된 취약점 상세</h2>
-${findingsHtml}
-<div class="roadmap">
-  <h3>📋 수정 로드맵</h3>
-  <ul>
-    <li><strong>P0 (즉시):</strong> ${pentestFindings.filter((v: any) => v.severity === 'CRITICAL').map((v: any) => v.id).join(', ') || '없음'}</li>
-    <li><strong>P1 (1주 내):</strong> ${pentestFindings.filter((v: any) => v.severity === 'HIGH').map((v: any) => v.id).join(', ') || '없음'}</li>
-    <li><strong>P2 (1개월 내):</strong> ${pentestFindings.filter((v: any) => v.severity === 'MEDIUM').map((v: any) => v.id).join(', ') || '없음'}</li>
-  </ul>
-</div>
-</body></html>`;
-          } else {
-            // Generic report HTML
-            fileContent = `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>${tplLabels[tpl] || '보고서'}</title><style>body{font-family:'Segoe UI',sans-serif;max-width:800px;margin:40px auto;padding:20px;color:#1a1a1a;line-height:1.6}h1{color:#1e40af;border-bottom:2px solid #3b82f6;padding-bottom:8px}pre{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:12px;overflow-x:auto;font-size:13px;white-space:pre-wrap}.meta{color:#6b7280;font-size:13px;margin-bottom:24px}</style></head><body><h1>${tplLabels[tpl] || '분석 보고서'}</h1><div class="meta">생성: ${new Date().toLocaleString('ko-KR')} | Metis.AI 자동 생성 보고서</div><pre>${pipelineData.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre></body></html>`;
-          }
+        let finalContent: string;
+        if (fmt === 'html' || fmt === 'pdf') {
+          finalContent = buildProfessionalHtmlReport(pipelineData, tplLabel, projectName, structuredFindings);
+        } else if (fmt === 'docx') {
+          finalContent = buildProfessionalWordDoc(pipelineData, tplLabel, projectName, structuredFindings);
         } else if (fmt === 'csv') {
-          fileContent = pipelineData;
+          finalContent = pipelineData;
         } else {
-          const header = `${tplLabels[tpl] || '분석 보고서'}\n생성: ${new Date().toLocaleString('ko-KR')} | Metis.AI\n${'═'.repeat(50)}\n\n`;
-          fileContent = header + pipelineData;
-        }
-
-        // Wrap HTML in Word-compatible format for .doc files
-        let finalContent = fileContent;
-        if (fmt === 'docx') {
-          // Use Word XML processing instructions so Word recognizes it as a native document
-          const wordXmlPrefix = `<!DOCTYPE html>
-<html xmlns:o="urn:schemas-microsoft-com:office:office"
-      xmlns:w="urn:schemas-microsoft-com:office:word"
-      xmlns="http://www.w3.org/TR/REC-html40">
-<head>
-<meta charset="UTF-8">
-<meta name="ProgId" content="Word.Document">
-<meta name="Generator" content="Metis.AI Report Generator">
-<!--[if gte mso 9]><xml>
-<o:DocumentProperties>
-  <o:Author>Metis.AI</o:Author>
-  <o:Created>${new Date().toISOString()}</o:Created>
-</o:DocumentProperties>
-<w:WordDocument>
-  <w:View>Print</w:View>
-  <w:Zoom>100</w:Zoom>
-  <w:DoNotOptimizeForBrowser/>
-</w:WordDocument>
-</xml><![endif]-->
-<style>
-  @page { size: A4; margin: 2cm; }
-  @page Section1 { mso-header-margin:.5in; mso-footer-margin:.5in; mso-paper-source:0; }
-  div.Section1 { page:Section1; }
-  body { font-family: 'Malgun Gothic', '맑은 고딕', 'Segoe UI', sans-serif; font-size: 11pt; line-height: 1.6; color: #1a1a1a; }
-  h1 { font-size: 20pt; color: #1e40af; border-bottom: 3px solid #3b82f6; padding-bottom: 8pt; margin-top: 24pt; }
-  h2 { font-size: 14pt; color: #374151; border-bottom: 1px solid #e5e7eb; padding-bottom: 6pt; margin-top: 18pt; }
-  table { border-collapse: collapse; width: 100%; }
-  td, th { border: 1px solid #d1d5db; padding: 6pt 8pt; font-size: 10pt; }
-  th { background-color: #f3f4f6; font-weight: bold; }
-  .severity-critical { background-color: #fef2f2; color: #dc2626; font-weight: bold; }
-  .severity-high { background-color: #fff7ed; color: #ea580c; font-weight: bold; }
-  .severity-medium { background-color: #fefce8; color: #ca8a04; font-weight: bold; }
-  .severity-low { background-color: #f0fdf4; color: #16a34a; font-weight: bold; }
-  .meta { color: #6b7280; font-size: 9pt; margin-bottom: 16pt; background: #f8fafc; padding: 8pt; border: 1px solid #e2e8f0; }
-  pre { background: #f8fafc; border: 1px solid #e2e8f0; padding: 8pt; font-size: 9pt; white-space: pre-wrap; font-family: 'Consolas', monospace; }
-</style>
-</head>
-<body><div class="Section1">`;
-          const wordXmlSuffix = `</div></body></html>`;
-
-          // Strip the existing HTML wrapper and insert into Word-compatible wrapper
-          const bodyMatch = fileContent.match(/<body[^>]*>([\s\S]*)<\/body>/i);
-          const bodyContent = bodyMatch ? bodyMatch[1] : fileContent;
-          finalContent = wordXmlPrefix + bodyContent + wordXmlSuffix;
+          const header = `${tplLabel}\n생성: ${new Date().toLocaleString('ko-KR')} | Metis.AI\n${'═'.repeat(50)}\n\n`;
+          finalContent = header + pipelineData;
         }
 
         // Create blob URL for download
@@ -928,14 +811,14 @@ ${findingsHtml}
 
         const fileSize = `${(new Blob([finalContent]).size / 1024).toFixed(1)}KB`;
 
-        output = `📄 ${tplLabels[tpl] || '보고서'} 생성 완료\n파일명: ${fileName}\n형식: ${fmt.toUpperCase()}\n크기: ${fileSize}\n시각: ${ts}\n\n⬇ 아래 '생성된 파일' 영역에서 다운로드 가능합니다.`;
+        output = `📄 ${tplLabel} 생성 완료\n파일명: ${fileName}\n형식: ${fmt.toUpperCase()}\n크기: ${fileSize}\n시각: ${ts}\n\n⬇ 노드 설정 패널의 '생성될 문서' 영역에서 다운로드하세요.`;
         details = {
           operation: 'write',
           format: fmt,
           template: tpl,
           fileSize,
-          generatedFiles: [{ name: fileName, path: downloadUrl, format: fmt, downloadUrl }],
           _pipelinePreview: pipelineData.substring(0, 3000),
+          _lastExecutionOutput: pipelineData,
         };
       } else {
         // Input/read node — show uploaded file info if available
@@ -1064,7 +947,8 @@ ${findingsHtml}
       const recipLabels: Record<string, string> = { me: '나에게만', team: '팀 전체', admins: '관리자', custom: '직접 지정' };
       const tplLabels: Record<string, string> = { success: '성공 알림', summary: '결과 요약', error: '오류 알림', custom: '사용자 정의' };
 
-      const nCh = node.settings.notifyChannel || node.settings.channel || 'email';
+      const rawSimCh = node.settings.notifyChannel || node.settings.channel || 'email';
+      const nCh = rawSimCh === 'push' ? 'browser' : rawSimCh;
       const nRecipType = node.settings.recipientType || 'me';
       const nRecip = nRecipType === 'custom'
         ? (node.settings.customRecipients || node.settings.recipient || '직접 지정')
@@ -1508,6 +1392,10 @@ const ACTION_VERB_MAP: Array<{
   { pattern: /검색|찾아|찾기|서치|search|크롤링|크롤|crawl|스크래핑|scrape/, nodeType: 'web-search', actionLabel: '검색', category: 'search' },
   // ── Collect / Gather ──
   { pattern: /수집|gather|collect|가져오기|긁어/, nodeType: 'web-search', actionLabel: '수집', category: 'search' },
+  // ── Pentest / Penetration Testing (before generic inspection to take priority) ──
+  { pattern: /모의해킹|pentest|침투테스트|침투진단|penetration/, nodeType: 'ai-processing', actionLabel: '모의해킹 진단', category: 'pentest' },
+  // ── Security Vulnerability Scanning ──
+  { pattern: /보안취약점|보안취약|보안점검|보안검사|보안진단|보안\s*스캔|vulnerability|cve|cwe|owasp|sast|sca/, nodeType: 'ai-processing', actionLabel: '보안취약점 점검', category: 'security' },
   // ── Inspection / Check / Scan ──
   { pattern: /점검|검사|스캔|scan|체크|check|진단|감사|audit|검증|verify|테스트|test/, nodeType: 'ai-processing', actionLabel: '점검', category: 'inspection' },
   // ── Analysis ──
@@ -1518,10 +1406,12 @@ const ACTION_VERB_MAP: Array<{
   { pattern: /변환|transform|파싱|parse|변경|convert|매핑|mapping/, nodeType: 'data-transform', actionLabel: '변환', category: 'transform' },
   // ── File Output / Download / Export ──
   { pattern: /다운로드|다운받|다운|내보내기|내보내|export|생성하여|생성해서|만들어/, nodeType: 'file-operation', actionLabel: '파일 생성', category: 'output' },
+  // ── Slack / Notification (before email — "보내줘" is generic, not email-specific) ──
+  { pattern: /슬랙|slack/, nodeType: 'slack-message', actionLabel: 'Slack 알림', category: 'delivery' },
   // ── Email ──
-  { pattern: /메일|이메일|email|발송|보내줘|보내주|전송/, nodeType: 'email-send', actionLabel: '메일 발송', category: 'delivery' },
-  // ── Slack / Notification ──
-  { pattern: /슬랙|slack|알림|notify|notification|알려|공유/, nodeType: 'slack-message', actionLabel: '알림', category: 'delivery' },
+  { pattern: /메일|이메일|email|발송|전송/, nodeType: 'email-send', actionLabel: '메일 발송', category: 'delivery' },
+  // ── Generic notification (알림/알려/공유/보내줘 without specific channel) ──
+  { pattern: /알림|notify|notification|알려|공유|보내줘|보내주/, nodeType: 'slack-message', actionLabel: '알림', category: 'delivery' },
   // ── Storage ──
   { pattern: /저장|save|store|db|database|insert|기록/, nodeType: 'data-storage', actionLabel: '저장', category: 'storage' },
   // ── Monitoring ──
@@ -1571,15 +1461,69 @@ function splitIntoActionPhrases(prompt: string): string[] {
     segments2.push(...parts);
   }
 
-  // Split on "및" — two strategies:
+  // Split on "및" — three strategies:
   //   A) Both sides independently have action verbs → split
   //   B) The segment ends with a shared verb that applies to both sides
   //      e.g., "보안취약성 및 모의해킹 가능성을 점검" → share "점검"
+  //   C) Sub-phrases contain domain nouns (보안취약점, 모의해킹 등) that each
+  //      map to a distinct node type — split them even without explicit verbs,
+  //      and extract any trailing delivery/action verb separately.
+
+  // Domain noun patterns that should each become a separate workflow node
+  const DOMAIN_NOUN_MAP: Array<{ pattern: RegExp; nodeType: NodeType; label: string; category: string }> = [
+    { pattern: /모의해킹|pentest|침투테스트|침투진단|penetration/, nodeType: 'ai-processing', label: '모의해킹 진단', category: 'pentest' },
+    { pattern: /보안취약점|보안취약|보안점검|보안검사|보안진단|vulnerability|sast|sca/, nodeType: 'ai-processing', label: '보안취약점 점검', category: 'security' },
+    { pattern: /라이선스\s*점검|license\s*check|spdx/, nodeType: 'ai-processing', label: '라이선스 점검', category: 'inspection' },
+    { pattern: /코드\s*리뷰|code\s*review/, nodeType: 'ai-processing', label: '코드 리뷰', category: 'analysis' },
+  ];
+
   const refined: string[] = [];
   for (const seg of segments2) {
-    const andSplit = seg.split(/\s*(?:및|그리고)\s*/);
+    // Split on Korean AND connectors: 및, 그리고, 과/와 (attached to preceding noun)
+    // "과/와" are postpositional particles: "보안취약점과 모의해킹", "분석와 진단"
+    const andSplit = seg.split(/\s*(?:및|그리고)\s*|(?<=[\uAC00-\uD7AF])(?:과|와)\s+/);
     if (andSplit.length > 1) {
-      // Strategy A: all sub-phrases independently have action verbs
+      // ── Strategy C (FIRST): sub-phrases contain domain nouns ──
+      // Must run before Strategy A because a domain-noun phrase may also contain
+      // a delivery verb (e.g., "모의해킹 취약점을 내 메일로 받을수 있도록 해줘"),
+      // and Strategy A would treat it as one unit, losing the delivery node.
+      const domainMatches: Array<{ part: string; match: typeof DOMAIN_NOUN_MAP[0] }> = [];
+      let nonDomainParts: string[] = [];
+      for (const part of andSplit) {
+        const domainMatch = DOMAIN_NOUN_MAP.find(d => d.pattern.test(part));
+        if (domainMatch) {
+          domainMatches.push({ part: part.trim(), match: domainMatch });
+        } else {
+          nonDomainParts.push(part.trim());
+        }
+      }
+
+      if (domainMatches.length > 0) {
+        // For each domain-matched part, check if it also contains a delivery verb.
+        // If so, split into domain-noun phrase + delivery phrase.
+        for (const dm of domainMatches) {
+          const hasDelivery = /메일|이메일|email|슬랙|slack|보내|발송|전송/.test(dm.part);
+          if (hasDelivery) {
+            // Extract domain noun portion vs delivery portion
+            const deliveryMatch = dm.part.match(/^(.*?(?:취약점|취약|진단|점검|검사|리뷰))\s*(?:을|를)?\s*(.*(?:메일|이메일|email|슬랙|slack|보내|발송|전송).*)$/);
+            if (deliveryMatch) {
+              refined.push(deliveryMatch[1].trim());
+              refined.push(deliveryMatch[2].trim());
+            } else {
+              refined.push(dm.part);
+            }
+          } else {
+            refined.push(dm.part);
+          }
+        }
+        // Non-domain parts kept as separate phrases
+        for (const ndp of nonDomainParts) {
+          if (ndp.trim()) refined.push(ndp.trim());
+        }
+        continue;
+      }
+
+      // ── Strategy A: all sub-phrases independently have action verbs → split ──
       const allHaveVerbs = andSplit.every(s =>
         ACTION_VERB_MAP.some(a => a.pattern.test(s))
       );
@@ -1588,7 +1532,7 @@ function splitIntoActionPhrases(prompt: string): string[] {
         continue;
       }
 
-      // Strategy B: last sub-phrase has a trailing verb — propagate it to earlier parts
+      // ── Strategy B: last sub-phrase has a trailing verb — propagate it to earlier parts ──
       const lastPart = andSplit[andSplit.length - 1];
       const trailingVerbMatch = ACTION_VERB_MAP.find(a => a.pattern.test(lastPart));
       if (trailingVerbMatch) {
@@ -1789,13 +1733,14 @@ function phraseToStep(phrase: string, index: number, allPhrases: string[]): Work
     settings.outputFormatLabel = fileFormatLabel;
     settings.downloadable = true;
   }
-  if (bestMatch.category === 'inspection' || bestMatch.category === 'analysis') {
+  if (bestMatch.category === 'inspection' || bestMatch.category === 'analysis'
+      || bestMatch.category === 'pentest' || bestMatch.category === 'security') {
     settings.analysisType = sanitizeInput(subject || phrase);
     settings.promptTemplate = `다음 데이터에 대해 "${sanitizeInput(subject || phrase)}" 작업을 수행하세요.\n\n{{이전 노드 결과}}`;
 
     // Differentiate security scan types for proper scanner selection
     const lowerPhrase = phrase.toLowerCase();
-    if (/모의해킹|pentest|침투|penetration/.test(lowerPhrase)) {
+    if (/모의해킹|pentest|침투|penetration/.test(lowerPhrase) || bestMatch.category === 'pentest') {
       settings.stepCategory = 'pentest';       // Distinct category → routed to PentestExecutor
       settings.scanMode = 'auto';              // 정찰 기반 공격 벡터 자동 선택
       settings.attackVectors = [];             // auto 모드에서 자동 결정
@@ -1804,7 +1749,7 @@ function phraseToStep(phrase: string, index: number, allPhrases: string[]): Work
       settings.cvssThreshold = 0.0;            // 모든 취약점 리포트
       settings.analysisType = '모의해킹 취약점 진단';
       settings.model = 'claude-sonnet-4-6';
-    } else if (/보안취약|vulnerability|취약점|cwe|owasp/.test(lowerPhrase)) {
+    } else if (/보안취약|vulnerability|취약점|cwe|owasp/.test(lowerPhrase) || bestMatch.category === 'security') {
       settings.scanners = ['sast', 'secrets', 'sca'];
       settings.analysisType = '보안취약성 점검';
     } else if (/라이선스|license|spdx/.test(lowerPhrase)) {
@@ -2135,6 +2080,9 @@ export default function BuilderPage() {
   const nodesRef = useRef<WorkflowNode[]>([]);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [loadedWorkflowName, setLoadedWorkflowName] = useState<string | null>(null);
+  const [workflowTitle, setWorkflowTitle] = useState('');
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const titleInputRef = useRef<HTMLInputElement>(null);
   const [execution, setExecution] = useState<ExecutionState>({
     isRunning: false,
     progress: 0,
@@ -2158,6 +2106,64 @@ export default function BuilderPage() {
 
   // Keep nodesRef in sync with state (for timer callbacks)
   useEffect(() => { nodesRef.current = nodes; }, [nodes]);
+
+  // ── Auto-save builder state to sessionStorage ──
+  const BUILDER_STATE_KEY = 'metis_builder_autosave';
+  const isRestoringRef = useRef(false);
+
+  // Restore builder state on mount (only if no id/wfId params)
+  useEffect(() => {
+    const hasIdParam = searchParams.get('id') || searchParams.get('wfId');
+    if (hasIdParam) return; // will be loaded from server/transfer
+
+    try {
+      const saved = sessionStorage.getItem(BUILDER_STATE_KEY);
+      if (saved) {
+        const state = JSON.parse(saved);
+        // If we have a saved wfId, redirect to load from server
+        if (state.serverWfId) {
+          const url = new URL(window.location.href);
+          url.searchParams.set('wfId', state.serverWfId);
+          window.history.replaceState({}, '', url.toString());
+          // The wfId useEffect will handle loading from server
+          return;
+        }
+        if (state.nodes?.length > 0) {
+          isRestoringRef.current = true;
+          setNodes(state.nodes);
+          setSelectedNodeId(state.selectedNodeId || state.nodes[0]?.id || null);
+          setLoadedWorkflowName(state.workflowName || null);
+          setWorkflowTitle(state.workflowTitle || state.workflowName || '');
+          setPromptInput(state.promptInput || '');
+          setShowPlanner(false);
+        }
+      }
+    } catch { /* ignore parse errors */ }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-save builder state whenever nodes change
+  useEffect(() => {
+    if (isRestoringRef.current) {
+      isRestoringRef.current = false;
+      return;
+    }
+    try {
+      if (nodes.length > 0) {
+        // Check if there's a wfId in the URL (server-saved workflow)
+        const wfId = new URLSearchParams(window.location.search).get('wfId');
+        const state = {
+          nodes: nodes.map(n => ({ ...n, executionResult: undefined })),
+          selectedNodeId,
+          workflowName: loadedWorkflowName,
+          workflowTitle,
+          promptInput,
+          serverWfId: wfId || undefined,
+          savedAt: new Date().toISOString(),
+        };
+        sessionStorage.setItem(BUILDER_STATE_KEY, JSON.stringify(state));
+      }
+    } catch { /* ignore storage errors */ }
+  }, [nodes, selectedNodeId, loadedWorkflowName, workflowTitle, promptInput]);
 
   // Cleanup scheduled timer on unmount
   useEffect(() => {
@@ -2195,6 +2201,7 @@ export default function BuilderPage() {
           setNodes(builderNodes);
           setSelectedNodeId(builderNodes[0].id);
           setLoadedWorkflowName(workflow.name || null);
+          setWorkflowTitle(workflow.name || '');
           setShowPlanner(false);
           setPromptInput(workflow.description || '');
 
@@ -2284,6 +2291,13 @@ export default function BuilderPage() {
 
     setNodes(newNodes);
     setSelectedNodeId(newNodes[0]?.id || null);
+
+    // Auto-generate workflow title from prompt (summarize to ~30 chars)
+    if (!workflowTitle || workflowTitle === '') {
+      const raw = promptInput.trim();
+      const summary = raw.length > 40 ? raw.slice(0, 37) + '...' : raw;
+      setWorkflowTitle(summary);
+    }
   };
 
   // ── Node Management ──
@@ -2322,6 +2336,14 @@ export default function BuilderPage() {
     setNodes([]);
     setSelectedNodeId(null);
     setPromptInput('');
+    setLoadedWorkflowName(null);
+    setWorkflowTitle('');
+    try { sessionStorage.removeItem(BUILDER_STATE_KEY); } catch { /* ignore */ }
+    // Clean URL params
+    const url = new URL(window.location.href);
+    url.searchParams.delete('wfId');
+    url.searchParams.delete('id');
+    window.history.replaceState({}, '', url.toString());
   };
 
   // ── Execution with Real Results ──
@@ -2414,19 +2436,13 @@ export default function BuilderPage() {
         settings: n.settings,
       }));
 
-      // Mark all nodes as running sequentially for visual feedback
-      for (let i = 0; i < updatedNodes.length; i++) {
-        if (i >= startFromIndex) {
-          updatedNodes = updatedNodes.map((n, idx) =>
-            idx === i ? { ...n, status: 'running' as const } : n
-          );
-          setNodes(updatedNodes);
-          setExecution(prev => ({
-            ...prev,
-            progress: ((i - startFromIndex) / (updatedNodes.length - startFromIndex)) * 50,
-            currentNodeId: updatedNodes[i].id,
-          }));
-        }
+      // Mark first node as running (sequential visual feedback)
+      if (startFromIndex < updatedNodes.length) {
+        updatedNodes = updatedNodes.map((n, idx) =>
+          idx === startFromIndex ? { ...n, status: 'running' as const } : n
+        );
+        setNodes(updatedNodes);
+        setExecution(prev => ({ ...prev, progress: 5, currentNodeId: updatedNodes[startFromIndex].id }));
       }
 
       const draftResult: DraftExecutionResult = await executeDraftViaResolution(
@@ -2434,10 +2450,11 @@ export default function BuilderPage() {
         draftNodes,
       );
 
-      // Map DraftExecutionResult → per-node ExecutionResult for UI
+      // Map DraftExecutionResult → per-node ExecutionResult for UI (sequential animation)
       const { execution, nodeResolutions, connectorStatus, warnings } = draftResult;
 
-      for (const nr of execution.nodeResults || []) {
+      for (let ri = 0; ri < (execution.nodeResults || []).length; ri++) {
+        const nr = execution.nodeResults[ri];
         const resolution = nodeResolutions.find(r => r.nodeKey === nr.nodeId);
         const executionResult: ExecutionResult = {
           status: nr.success ? 'completed' : 'failed',
@@ -2459,11 +2476,29 @@ export default function BuilderPage() {
           error: nr.error,
         };
 
-        updatedNodes = updatedNodes.map(n =>
-          n.id === nr.nodeId
-            ? { ...n, status: (nr.success ? 'completed' : 'failed') as any, executionResult }
-            : n
-        );
+        // Mark current node as completed, next node as running (sequential animation)
+        updatedNodes = updatedNodes.map((n, idx) => {
+          if (n.id === nr.nodeId) {
+            return { ...n, status: (nr.success ? 'completed' : 'failed') as any, executionResult };
+          }
+          // Mark next node as running
+          const nextNr = execution.nodeResults[ri + 1];
+          if (nextNr && n.id === nextNr.nodeId) {
+            return { ...n, status: 'running' as const };
+          }
+          return n;
+        });
+        setNodes([...updatedNodes]);
+        setExecution(prev => ({
+          ...prev,
+          progress: ((ri + 1) / execution.nodeResults.length) * 90,
+          currentNodeId: execution.nodeResults[ri + 1]?.nodeId || nr.nodeId,
+        }));
+
+        // Brief delay for visual sequential feedback
+        if (ri < execution.nodeResults.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+        }
       }
 
       // Show connector warnings if any
@@ -2512,152 +2547,94 @@ export default function BuilderPage() {
       setScheduledExecution({ active: false, scheduledTime: null, timerId: null, scheduleLabel: '' });
 
     } catch (resolutionError) {
-      // ── Fallback 1: SSE-based pipeline execution ──
-      console.warn('Resolution-based execution failed, trying SSE pipeline:', resolutionError);
+      // ── Fallback 1: Synchronous pipeline execution (more reliable than SSE) ──
+      console.warn('Resolution-based execution failed, trying sync pipeline:', resolutionError);
 
       try {
-        await executePipelineAsync(
+        // Mark first node as running
+        if (startFromIndex < updatedNodes.length) {
+          updatedNodes = updatedNodes.map((n, idx) =>
+            idx === startFromIndex ? { ...n, status: 'running' as const } : n
+          );
+          setNodes(updatedNodes);
+          setExecution(prev => ({ ...prev, progress: 5, currentNodeId: updatedNodes[startFromIndex].id }));
+        }
+
+        // Use synchronous execution — returns all results at once, no SSE timing issues
+        const result: PipelineResult = await executePipelineSync(
           promptInput || 'Untitled Workflow',
           pipelineNodes,
-          (event: PipelineProgressEvent) => {
-            switch (event.type) {
-              case 'node_start':
-                if (event.nodeId) {
-                  updatedNodes = updatedNodes.map(n =>
-                    n.id === event.nodeId ? { ...n, status: 'running' as const } : n
-                  );
-                  setNodes(updatedNodes);
-                  setExecution(prev => ({
-                    ...prev,
-                    progress: event.progress,
-                    currentNodeId: event.nodeId || null,
-                  }));
-                }
-                break;
-
-              case 'node_complete':
-                if (event.nodeId && event.data) {
-                  const nodeResult = event.data;
-                  const executionResult: ExecutionResult = {
-                    status: nodeResult.success ? 'completed' : 'failed',
-                    startedAt: nodeResult.startedAt || new Date().toISOString(),
-                    completedAt: nodeResult.completedAt || new Date().toISOString(),
-                    duration: nodeResult.durationMs || 0,
-                    output: nodeResult.output?.outputText || '실행 완료',
-                    details: {
-                      ...nodeResult.output?.data,
-                      generatedFiles: nodeResult.output?.generatedFiles,
-                    },
-                    error: nodeResult.output?.error,
-                  };
-
-                  const optimization: OptimizationResult | undefined = nodeResult.output?.data?.finops
-                    ? {
-                        routedModel: nodeResult.output.data.finops.routedModel,
-                        cacheHit: nodeResult.output.data.finops.cacheHit,
-                        savedUsd: nodeResult.output.data.finops.savedUsd,
-                      }
-                    : undefined;
-
-                  updatedNodes = updatedNodes.map(n =>
-                    n.id === event.nodeId
-                      ? {
-                          ...n,
-                          status: (nodeResult.success ? 'completed' : 'failed') as any,
-                          executionResult,
-                          ...(optimization ? { optimization } : {}),
-                        }
-                      : n
-                  );
-                  setNodes(updatedNodes);
-                  setExecution(prev => ({ ...prev, progress: event.progress }));
-                }
-                break;
-
-              case 'node_error':
-                if (event.nodeId) {
-                  updatedNodes = updatedNodes.map(n =>
-                    n.id === event.nodeId
-                      ? {
-                          ...n,
-                          status: 'failed' as const,
-                          executionResult: {
-                            status: 'failed' as const,
-                            startedAt: new Date().toISOString(),
-                            completedAt: new Date().toISOString(),
-                            duration: 0,
-                            output: `❌ 실행 실패: ${event.error || '알 수 없는 오류'}`,
-                            error: event.error,
-                          },
-                        }
-                      : n
-                  );
-                  setNodes(updatedNodes);
-                }
-                break;
-
-              case 'pipeline_complete':
-                if (event.data) {
-                  const result = event.data as PipelineResult;
-                  for (const nr of result.nodeResults || []) {
-                    updatedNodes = updatedNodes.map(n => {
-                      if (n.id !== nr.nodeId) return n;
-                      return {
-                        ...n,
-                        status: (nr.success ? 'completed' : 'failed') as any,
-                        executionResult: {
-                          status: nr.success ? 'completed' as const : 'failed' as const,
-                          startedAt: nr.startedAt,
-                          completedAt: nr.completedAt,
-                          duration: nr.durationMs,
-                          output: nr.output?.outputText || '',
-                          details: {
-                            ...nr.output?.data,
-                            generatedFiles: nr.output?.generatedFiles,
-                          },
-                          error: nr.error,
-                        },
-                      };
-                    });
-                  }
-                  setNodes(updatedNodes);
-
-                  const executionLog = {
-                    id: result.executionSessionId || `exec-${Date.now()}`,
-                    workflowName: promptInput || 'Untitled Workflow',
-                    nodes: updatedNodes.map(n => ({
-                      name: n.name, type: n.type,
-                      status: n.executionResult?.status || 'pending',
-                      duration: n.executionResult?.duration || 0,
-                    })),
-                    status: result.status,
-                    startedAt: startTime,
-                    completedAt: new Date().toISOString(),
-                    totalDuration: result.totalDurationMs || 0,
-                    generatedFiles: result.generatedFiles,
-                  };
-                  try {
-                    const execs = JSON.parse(localStorage.getItem('metis_flo_executions') || '[]');
-                    execs.unshift(executionLog);
-                    localStorage.setItem('metis_flo_executions', JSON.stringify(execs.slice(0, 50)));
-                  } catch { /* ignore localStorage errors */ }
-                }
-
-                setExecution({ isRunning: false, progress: 100, currentNodeId: null });
-                setScheduledExecution({ active: false, scheduledTime: null, timerId: null, scheduleLabel: '' });
-                break;
-
-              case 'pipeline_error':
-                setExecution({ isRunning: false, progress: 0, currentNodeId: null });
-                setScheduledExecution({ active: false, scheduledTime: null, timerId: null, scheduleLabel: '' });
-                break;
-            }
-          },
           uploadedFiles.length > 0 ? uploadedFiles : undefined,
         );
-      } catch (sseError) {
+
+        // Map pipeline results to per-node UI state (sequential animation)
+        const nodeResults = result.nodeResults || [];
+        for (let ri = 0; ri < nodeResults.length; ri++) {
+          const nr = nodeResults[ri];
+          const executionResult: ExecutionResult = {
+            status: nr.success ? 'completed' : 'failed',
+            startedAt: nr.startedAt || new Date().toISOString(),
+            completedAt: nr.completedAt || new Date().toISOString(),
+            duration: nr.durationMs || 0,
+            output: nr.output?.outputText || '실행 완료',
+            details: {
+              ...nr.output?.data,
+              generatedFiles: nr.output?.generatedFiles,
+            },
+            error: nr.error || nr.output?.error,
+          };
+
+          // Mark current node complete, next node as running
+          updatedNodes = updatedNodes.map((n) => {
+            if (n.id === nr.nodeId) {
+              return { ...n, status: (nr.success ? 'completed' : 'failed') as any, executionResult };
+            }
+            const nextNr = nodeResults[ri + 1];
+            if (nextNr && n.id === nextNr.nodeId) {
+              return { ...n, status: 'running' as const };
+            }
+            return n;
+          });
+          setNodes([...updatedNodes]);
+          setExecution(prev => ({
+            ...prev,
+            progress: ((ri + 1) / nodeResults.length) * 90,
+            currentNodeId: nodeResults[ri + 1]?.nodeId || nr.nodeId,
+          }));
+
+          // Brief delay for sequential visual feedback
+          if (ri < nodeResults.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 300));
+          }
+        }
+
+        // Save execution log
+        const executionLog = {
+          id: result.executionSessionId || `exec-${Date.now()}`,
+          workflowName: promptInput || 'Untitled Workflow',
+          nodes: updatedNodes.map(n => ({
+            name: n.name, type: n.type,
+            status: n.executionResult?.status || 'pending',
+            duration: n.executionResult?.duration || 0,
+          })),
+          status: result.status,
+          startedAt: startTime,
+          completedAt: new Date().toISOString(),
+          totalDuration: result.totalDurationMs || 0,
+          generatedFiles: result.generatedFiles,
+        };
+        try {
+          const execs = JSON.parse(localStorage.getItem('metis_flo_executions') || '[]');
+          execs.unshift(executionLog);
+          localStorage.setItem('metis_flo_executions', JSON.stringify(execs.slice(0, 50)));
+        } catch { /* ignore localStorage errors */ }
+
+        setExecution({ isRunning: false, progress: 100, currentNodeId: null });
+        setScheduledExecution({ active: false, scheduledTime: null, timerId: null, scheduleLabel: '' });
+
+      } catch (syncError) {
         // ── Fallback 2: Local simulation when no backend is available ──
-        console.warn('SSE pipeline also failed, falling back to local simulation:', sseError);
+        console.warn('Sync pipeline also failed, falling back to local simulation:', syncError);
         await runPipelineLocal(startFromIndex, updatedNodes, startTime);
       }
     }
@@ -2762,7 +2739,9 @@ export default function BuilderPage() {
 
       // ── Real Notification Sending via NotificationService ──
       } else if (node.type === 'notification') {
-        const nCh = node.settings.notifyChannel || node.settings.channel || 'email';
+        const rawCh = node.settings.notifyChannel || node.settings.channel || 'email';
+        // Legacy compat: 'push' was used in older harness nodes — map to 'browser'
+        const nCh = rawCh === 'push' ? 'browser' : rawCh;
         const nRecipType = node.settings.recipientType || 'me';
         const nTemplate = node.settings.notifyTemplate || 'success';
         const pipelineContent = collectPipelineData(previousCompleted);
@@ -2805,18 +2784,9 @@ export default function BuilderPage() {
               executionSummary: pipelineContent.substring(0, 3000),
             };
 
-            const notifyHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
-            const metisToken = typeof globalThis !== 'undefined' && 'localStorage' in globalThis ? globalThis.localStorage.getItem('metis_access_token') : null;
-            if (metisToken) notifyHeaders['Authorization'] = `Bearer ${metisToken}`;
-            const csrfMatch = typeof document !== 'undefined' ? document.cookie.match(/(?:^|;\s*)metis_csrf=([^;]+)/) : null;
-            if (csrfMatch) notifyHeaders['X-CSRF-Token'] = decodeURIComponent(csrfMatch[1]);
-            const notifyResp = await fetch('/api/notifications/send', {
-              method: 'POST',
-              headers: notifyHeaders,
-              credentials: 'include',
-              body: JSON.stringify(notifyPayload),
-            });
-            const notifyResult = await notifyResp.json() as { success: boolean; channel: string; recipientCount: number; resolvedRecipients: string[]; messageId?: string; error?: string; timestamp: string };
+            const notifyResult = await api.post<{ success: boolean; channel: string; recipientCount: number; resolvedRecipients: string[]; messageId?: string; error?: string; timestamp: string }>(
+              '/api/notifications/send', notifyPayload
+            );
 
             const chLabels: Record<string, string> = { email: '이메일', slack: 'Slack', webhook: '웹훅' };
             if (notifyResult.success) {
@@ -2845,13 +2815,88 @@ export default function BuilderPage() {
           }
         }
 
-      // ── File Output: store pipeline data for preview/download ──
+      // ── File Output: generate real report and create download ──
       } else if (node.type === 'file-operation' && node.settings.stepCategory === 'output') {
-        executionResult = simulateNodeExecution(node, previousCompleted);
-        // Store pipeline data so FileOutputPanel can show real preview & download
         const pipelineContent = collectPipelineData(previousCompleted);
         node.settings._pipelinePreview = pipelineContent.substring(0, 5000);
         node.settings._lastExecutionOutput = pipelineContent;
+
+        // Look for structured findings from upstream AI processing nodes
+        const aiNode = previousCompleted.find(n =>
+          n.type === 'ai-processing' && n.executionResult?.status === 'completed' && n.executionResult?.details?.findings?.length > 0
+        );
+        const structuredFindings = aiNode?.executionResult?.details?.findings || null;
+
+        // Generate actual downloadable report
+        const fmt = node.settings.outputFormat || 'html';
+        const tplLabel = node.settings.reportTemplate === 'code-review' ? '코드 리뷰 보고서'
+          : node.settings.reportTemplate === 'executive-summary' ? '경영진 요약'
+          : node.settings.reportTemplate === 'technical-detail' ? '기술 상세 보고서'
+          : '보안 감사 보고서';
+        const projectName = node.settings.projectName || '';
+        const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const baseName = node.settings.fileNamePattern || 'metis-report';
+        const fileName = `${baseName}-${ts}`;
+
+        let blob: Blob;
+        let ext: string;
+        let fileLabel: string;
+
+        if (fmt === 'html') {
+          const htmlDoc = buildProfessionalHtmlReport(pipelineContent, tplLabel, projectName, structuredFindings);
+          blob = new Blob([htmlDoc], { type: 'text/html;charset=utf-8' });
+          ext = '.html';
+          fileLabel = 'HTML 대시보드 보고서';
+        } else if (fmt === 'docx' || fmt === 'doc') {
+          const wordDoc = buildProfessionalWordDoc(pipelineContent, tplLabel, projectName, structuredFindings);
+          blob = new Blob([wordDoc], { type: 'application/msword' });
+          ext = '.doc';
+          fileLabel = 'Word 보고서';
+        } else {
+          // For other formats, use plain content
+          blob = new Blob([pipelineContent], { type: 'text/plain;charset=utf-8' });
+          ext = fmt === 'csv' ? '.csv' : fmt === 'json' ? '.json' : fmt === 'md' ? '.md' : '.txt';
+          fileLabel = `${fmt.toUpperCase()} 파일`;
+        }
+
+        const downloadUrl = URL.createObjectURL(blob);
+        const fullFileName = `${fileName}${ext}`;
+        const fileSizeKB = (blob.size / 1024).toFixed(1);
+
+        // Auto-download if enabled
+        if (node.settings.downloadable !== false) {
+          const a = document.createElement('a');
+          a.href = downloadUrl;
+          a.download = fullFileName;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }
+
+        executionResult = {
+          status: 'completed',
+          startedAt: new Date(Date.now() - 1000).toISOString(),
+          completedAt: new Date().toISOString(),
+          duration: 1000,
+          output: `📄 ${fileLabel} 생성 완료\n`
+            + `파일명: ${fullFileName}\n`
+            + `크기: ${fileSizeKB}KB\n`
+            + `형식: ${ext.replace('.', '').toUpperCase()}\n`
+            + `보고서 유형: ${tplLabel}\n`
+            + `상태: 다운로드 ${node.settings.downloadable !== false ? '완료 ✅' : '준비됨 (수동 다운로드)'}`,
+          details: {
+            generatedFiles: [{
+              name: fullFileName,
+              format: ext.replace('.', ''),
+              size: blob.size,
+              downloadUrl,
+            }],
+            fileName: fullFileName,
+            fileSize: `${fileSizeKB}KB`,
+            format: ext.replace('.', ''),
+            mode: '실제 보고서 생성',
+          },
+        };
 
       } else {
         executionResult = simulateNodeExecution(node, previousCompleted);
@@ -3197,6 +3242,7 @@ export default function BuilderPage() {
         setServerWorkflow(wf);
         setPromptInput(wf.description || wf.name);
         setLoadedWorkflowName(wf.name);
+        setWorkflowTitle(wf.name || '');
 
         // Convert server nodes → builder WorkflowNodes
         const builderNodes: WorkflowNode[] = wf.nodes.map((n) => {
@@ -3252,55 +3298,104 @@ export default function BuilderPage() {
   const handleServerSave = async () => {
     if (nodes.length === 0) return;
 
+    // Resolve the final workflow name
+    const wfName = (workflowTitle.trim() || loadedWorkflowName || '').trim();
+    if (!wfName) {
+      const input = prompt('워크플로우 이름을 입력하세요:', promptInput || '');
+      if (!input?.trim()) return;
+      setWorkflowTitle(input.trim());
+      setLoadedWorkflowName(input.trim());
+      // Re-call with the now-set title
+      setTimeout(() => handleServerSave(), 0);
+      return;
+    }
+
     const nodesDtos = nodesToServerDto(nodes);
 
     try {
+      setIsSaving(true);
+      setSaveError(null);
+
       if (serverWorkflow) {
-        // Update existing workflow (with OCC)
-        setIsSaving(true);
-        setSaveError(null);
+        // ── Case 1: Already linked to a server workflow → update it ──
         const updated = await updateWorkflow(serverWorkflow.id, {
-          name: loadedWorkflowName || serverWorkflow.name,
+          name: wfName,
           nodes: nodesDtos,
           edges: [],
           expectedVersion: serverWorkflow.version,
         });
         setServerWorkflow(updated);
+        setLoadedWorkflowName(updated.name);
+        setWorkflowTitle(updated.name);
         setLastSavedAt(new Date());
       } else {
-        // Create new workflow — ask for name
-        const defaultName = loadedWorkflowName || promptInput || '';
-        const wfName = prompt('워크플로우 이름을 입력하세요:', defaultName);
-        if (!wfName || !wfName.trim()) return; // user cancelled
+        // ── Case 2: Not linked yet → search by name to decide create vs update ──
+        let existingWf: WorkflowDetail | null = null;
 
-        const wfDesc = prompt('설명 (선택사항):', '');
+        try {
+          const searchResult = await listWorkflows({ search: wfName, limit: 50 });
+          // Find exact name match (case-insensitive)
+          const exactMatch = searchResult.items.find(
+            (item) => item.name.trim().toLowerCase() === wfName.toLowerCase()
+          );
+          if (exactMatch) {
+            // Load the full detail to get version for OCC
+            existingWf = await getWorkflow(exactMatch.id);
+          }
+        } catch {
+          // Search failed — proceed with create
+        }
 
-        setIsSaving(true);
-        setSaveError(null);
+        if (existingWf) {
+          // ── Found existing workflow with same name → update it ──
+          const updated = await updateWorkflow(existingWf.id, {
+            name: wfName,
+            nodes: nodesDtos,
+            edges: [],
+            expectedVersion: existingWf.version,
+          });
+          setServerWorkflow(updated);
+          setLoadedWorkflowName(updated.name);
+          setWorkflowTitle(updated.name);
+          setLastSavedAt(new Date());
 
-        const wfKey = generateWorkflowKey(wfName.trim());
-        const created = await createWorkflow({
-          key: wfKey,
-          name: wfName.trim(),
-          description: wfDesc?.trim() || undefined,
-          nodes: nodesDtos,
-          edges: [],
-        });
-        setServerWorkflow(created);
-        setLoadedWorkflowName(created.name);
-        setLastSavedAt(new Date());
+          // Update URL with workflow ID
+          const url = new URL(window.location.href);
+          url.searchParams.set('wfId', updated.id);
+          window.history.replaceState({}, '', url.toString());
+        } else {
+          // ── No existing workflow with this name → create new ──
+          const wfDesc = promptInput || '';
+          const wfKey = generateWorkflowKey(wfName);
+          const created = await createWorkflow({
+            key: wfKey,
+            name: wfName,
+            description: wfDesc?.trim() || undefined,
+            nodes: nodesDtos,
+            edges: [],
+          });
+          setServerWorkflow(created);
+          setLoadedWorkflowName(created.name);
+          setWorkflowTitle(created.name);
+          setLastSavedAt(new Date());
 
-        // Update URL with new workflow ID (without full page reload)
-        const url = new URL(window.location.href);
-        url.searchParams.set('wfId', created.id);
-        window.history.replaceState({}, '', url.toString());
+          // Update URL with new workflow ID
+          const url = new URL(window.location.href);
+          url.searchParams.set('wfId', created.id);
+          window.history.replaceState({}, '', url.toString());
+        }
       }
     } catch (err: any) {
-      const errMsg = err.message || '서버 저장 실패';
-      setSaveError(errMsg);
       console.warn('Server save failed, falling back to localStorage:', err);
       // Fallback to localStorage save
-      handleFloSaveLocal();
+      try {
+        handleFloSaveLocal();
+        setSaveError(null);
+        setLastSavedAt(new Date());
+      } catch (localErr) {
+        const errMsg = err.message || '저장 실패';
+        setSaveError(errMsg);
+      }
     } finally {
       setIsSaving(false);
     }
@@ -3330,8 +3425,9 @@ export default function BuilderPage() {
   };
 
   // Legacy localStorage save (kept for backward compatibility / offline fallback)
+  // Uses name-based matching: same name → update, new name → create
   const handleFloSaveLocal = () => {
-    const editingId = searchParams.get('id');
+    const floName = (workflowTitle.trim() || loadedWorkflowName || promptInput || '새 워크플로우').trim();
     const existing = JSON.parse(localStorage.getItem('metis_flo_workflows') || '[]');
     const updatedNodeData = nodes.map(n => ({
       id: n.id,
@@ -3341,15 +3437,35 @@ export default function BuilderPage() {
       settings: n.settings,
     }));
 
+    // 1) Try matching by URL param id
+    const editingId = searchParams.get('id');
     if (editingId) {
       const idx = existing.findIndex((w: any) => w.id === editingId);
       if (idx !== -1) {
-        existing[idx] = { ...existing[idx], nodes: updatedNodeData, description: promptInput || existing[idx].description, lastModified: new Date().toISOString().split('T')[0] };
+        existing[idx] = { ...existing[idx], name: floName, nodes: updatedNodeData, description: promptInput || existing[idx].description, lastModified: new Date().toISOString().split('T')[0] };
         localStorage.setItem('metis_flo_workflows', JSON.stringify(existing));
         return;
       }
     }
-    const floName = loadedWorkflowName || promptInput || '새 워크플로우';
+
+    // 2) Try matching by name (case-insensitive)
+    const nameMatchIdx = existing.findIndex(
+      (w: any) => w.name?.trim().toLowerCase() === floName.toLowerCase()
+    );
+    if (nameMatchIdx !== -1) {
+      // Update existing workflow with same name
+      existing[nameMatchIdx] = {
+        ...existing[nameMatchIdx],
+        name: floName,
+        nodes: updatedNodeData,
+        description: promptInput || existing[nameMatchIdx].description,
+        lastModified: new Date().toISOString().split('T')[0],
+      };
+      localStorage.setItem('metis_flo_workflows', JSON.stringify(existing));
+      return;
+    }
+
+    // 3) No match → create new
     existing.unshift({
       id: `wf-${Date.now()}`, name: floName, description: promptInput || floName,
       nodes: updatedNodeData, status: '활성' as const, category: '자동화' as const,
@@ -3811,6 +3927,51 @@ export default function BuilderPage() {
 
           {/* ── Node Pipeline (compact) ── */}
           <div className="flex-1 overflow-y-auto bg-white">
+
+            {/* ── Workflow Title Bar ── */}
+            {nodes.length > 0 && (
+              <div className="px-4 pt-6 pb-3 border-b border-gray-100 bg-gray-50/50">
+                <div className="flex items-center gap-2 max-w-md mx-auto">
+                  {isEditingTitle ? (
+                    <input
+                      ref={titleInputRef}
+                      type="text"
+                      value={workflowTitle}
+                      onChange={e => setWorkflowTitle(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') { setIsEditingTitle(false); setLoadedWorkflowName(workflowTitle); }
+                        if (e.key === 'Escape') setIsEditingTitle(false);
+                      }}
+                      onBlur={() => { setIsEditingTitle(false); setLoadedWorkflowName(workflowTitle); }}
+                      className="flex-1 px-2.5 py-1.5 text-sm font-semibold text-gray-900 border border-blue-400 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white"
+                      placeholder="워크플로우 제목을 입력하세요"
+                      autoFocus
+                    />
+                  ) : (
+                    <h2
+                      onClick={() => { setIsEditingTitle(true); setTimeout(() => titleInputRef.current?.select(), 50); }}
+                      className="flex-1 px-2.5 py-1.5 text-sm font-semibold text-gray-900 truncate cursor-pointer hover:bg-white hover:shadow-sm rounded-lg transition border border-transparent hover:border-gray-200"
+                      title="클릭하여 제목 수정"
+                    >
+                      {workflowTitle || '제목 없음'}
+                    </h2>
+                  )}
+                  <button
+                    onClick={() => {
+                      if (workflowTitle.trim()) {
+                        setLoadedWorkflowName(workflowTitle.trim());
+                      }
+                    }}
+                    disabled={!workflowTitle.trim()}
+                    className="flex-shrink-0 px-2.5 py-1.5 bg-gray-600 text-white text-xs font-semibold rounded-lg hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition flex items-center gap-1"
+                    title="이름만 변경 (템플릿마켓 저장은 우측 상단 저장 버튼)"
+                  >
+                    ✏️ <span>이름 적용</span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* Execution Progress */}
             {execution.isRunning && (
               <div className="px-4 pt-3">
@@ -3830,7 +3991,7 @@ export default function BuilderPage() {
                 </div>
               </div>
             ) : (
-              <div className="p-3">
+              <div className="p-3 pt-8">
                 <div className="max-w-xs mx-auto">
                   {/* Compact Workflow Nodes */}
                   {nodes.map((node, idx) => {
@@ -4311,39 +4472,6 @@ export default function BuilderPage() {
                             <span className="text-gray-900 text-right break-words ml-2">
                               {typeof value === 'object' ? JSON.stringify(value) : String(value)}
                             </span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Generated Files Download */}
-                  {selectedNode.executionResult.details?.generatedFiles?.length > 0 && (
-                    <div className="mb-4">
-                      <h4 className="text-xs font-bold text-gray-900 mb-2">📄 생성된 파일</h4>
-                      <div className="bg-white border border-gray-300 rounded-lg divide-y divide-gray-200">
-                        {(selectedNode.executionResult.details.generatedFiles as Array<{ name: string; path: string; format: string; downloadUrl?: string }>).map((gf, idx) => (
-                          <div key={idx} className="flex items-center justify-between p-2.5 hover:bg-gray-50 transition">
-                            <div className="flex items-center gap-2">
-                              <span className="text-lg">{
-                                gf.format === 'docx' ? '📝' :
-                                gf.format === 'pdf' ? '📕' :
-                                gf.format === 'html' ? '🌐' :
-                                gf.format === 'csv' ? '📊' :
-                                gf.format === 'xlsx' ? '📗' : '📄'
-                              }</span>
-                              <div>
-                                <p className="text-xs font-semibold text-gray-800">{gf.name}</p>
-                                <p className="text-[9px] text-gray-500 uppercase">{gf.format}</p>
-                              </div>
-                            </div>
-                            <a
-                              href={gf.downloadUrl || getDownloadUrl(gf.path?.split('/').slice(-2, -1)[0] || '', gf.name)}
-                              download={gf.name}
-                              className="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white text-[11px] font-semibold rounded-lg transition shadow-sm"
-                            >
-                              ⬇ 다운로드
-                            </a>
                           </div>
                         ))}
                       </div>

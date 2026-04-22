@@ -2,6 +2,14 @@
 
 import { useState, useRef, useCallback } from 'react';
 import { storePendingFiles } from '@/lib/pending-file-store';
+import { api } from '@/lib/api-client';
+import {
+  escH as _escH,
+  parseFindings as _parseFindings,
+  SEV_STYLE as _SEV_STYLE,
+  buildProfessionalHtmlReport,
+  buildProfessionalWordDoc,
+} from '@/lib/report-utils';
 
 // ── Lightweight ZIP Central Directory parser (no external deps) ──
 // Reads the End of Central Directory record to find file entries.
@@ -518,6 +526,16 @@ const REPORT_TEMPLATES = [
   { key: 'custom', label: '사용자 정의', desc: '직접 템플릿 작성' },
 ];
 
+// ── Professional Report Generators — imported from @/lib/report-utils ──
+// escH, parseFindings, SEV_STYLE, buildProfessionalHtmlReport, buildProfessionalWordDoc
+// are imported at the top of this file.
+
+// Keep local aliases for backward compatibility within this file
+const escH = _escH;
+const parseFindings = _parseFindings;
+const SEV_STYLE = _SEV_STYLE;
+
+
 function FileOutputPanel({ nodeId, settings, onUpdate }: PanelProps) {
   const [showPreview, setShowPreview] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
@@ -549,7 +567,7 @@ function FileOutputPanel({ nodeId, settings, onUpdate }: PanelProps) {
       let ext: string;
 
       if (selectedFormat === 'html') {
-        const htmlDoc = `<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>${tplInfo?.label || 'Report'}</title><style>body{font-family:'Segoe UI',sans-serif;max-width:800px;margin:40px auto;padding:20px;color:#1a1a1a;line-height:1.6}h1{color:#1e40af;border-bottom:2px solid #3b82f6;padding-bottom:8px}h2{color:#1e3a5f;margin-top:24px}pre{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:12px;overflow-x:auto;font-size:13px}.meta{color:#6b7280;font-size:13px;margin-bottom:24px}</style></head><body><h1>${tplInfo?.label || '분석 보고서'}</h1><div class="meta">생성: ${new Date().toLocaleString('ko-KR')} | Metis.AI</div><div>${content.replace(/\n/g, '<br>')}</div></body></html>`;
+        const htmlDoc = buildProfessionalHtmlReport(content, tplInfo?.label || '분석 보고서', settings.projectName || '');
         blob = new Blob([htmlDoc], { type: 'text/html;charset=utf-8' });
         ext = '.html';
       } else if (selectedFormat === 'csv') {
@@ -560,11 +578,16 @@ function FileOutputPanel({ nodeId, settings, onUpdate }: PanelProps) {
         const pdfHtml = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${tplInfo?.label || 'Report'}</title><style>@media print{body{margin:0}}body{font-family:'Segoe UI',sans-serif;max-width:700px;margin:20px auto;padding:20px;font-size:12px;line-height:1.5}h1{font-size:18px;color:#1e40af}pre{white-space:pre-wrap;font-size:11px}</style><script>window.onload=function(){window.print()}<\/script></head><body><h1>${tplInfo?.label || '분석 보고서'}</h1><p style="color:#888;font-size:11px;">Metis.AI | ${new Date().toLocaleString('ko-KR')}</p><div>${content.replace(/\n/g, '<br>')}</div></body></html>`;
         blob = new Blob([pdfHtml], { type: 'text/html;charset=utf-8' });
         ext = '.html'; // Opens in browser for print-to-PDF
+      } else if (selectedFormat === 'docx') {
+        // Word ML (MHTML) format — opens natively in MS Word, professional formatting
+        const wordDoc = buildProfessionalWordDoc(content, tplInfo?.label || '분석 보고서', settings.projectName || '');
+        blob = new Blob([wordDoc], { type: 'application/msword' });
+        ext = '.doc';
       } else {
-        // For docx/xlsx — generate as formatted text (downloadable)
+        // xlsx, json, md 등 — plain text fallback
         const header = `${tplInfo?.label || '분석 보고서'}\n생성: ${new Date().toLocaleString('ko-KR')} | Metis.AI\n${'═'.repeat(50)}\n\n`;
         blob = new Blob([header + content], { type: 'text/plain;charset=utf-8' });
-        ext = selectedFormat === 'xlsx' ? '.txt' : '.txt'; // Plain text fallback
+        ext = fmtInfo?.ext || '.txt';
       }
 
       const url = URL.createObjectURL(blob);
@@ -2213,13 +2236,10 @@ function NotificationPanel({ nodeId, settings, onUpdate }: PanelProps) {
       const customParam = recipientType === 'custom' && settings.customEmail
         ? `&customEmails=${encodeURIComponent(settings.customEmail)}`
         : '';
-      const resp = await fetch(`/api/notifications/recipients/preview?recipientType=${recipientType}${customParam}`);
-      if (resp.ok) {
-        const data = await resp.json();
-        setRecipientPreview(data);
-      } else {
-        setRecipientPreview({ emails: [], names: [], count: 0 });
-      }
+      const data = await api.get<{ emails: string[]; names: string[]; count: number }>(
+        `/api/notifications/recipients/preview?recipientType=${recipientType}${customParam}`
+      );
+      setRecipientPreview(data);
     } catch {
       // API not available — show placeholder
       const placeholders: Record<string, { emails: string[]; names: string[] }> = {
@@ -2242,7 +2262,9 @@ function NotificationPanel({ nodeId, settings, onUpdate }: PanelProps) {
       const payload = {
         channel: selectedChannel,
         recipientType: selectedRecipient,
-        customEmails: selectedRecipient === 'custom' && settings.customEmail ? [settings.customEmail] : undefined,
+        customEmails: selectedRecipient === 'custom' && settings.customEmail
+          ? settings.customEmail.split(/[,;\s]+/).map((e: string) => e.trim()).filter(Boolean)
+          : undefined,
         slackChannel: selectedChannel === 'slack' ? (settings.slackChannel || '#general') : undefined,
         slackWebhookUrl: settings.slackWebhookUrl,
         webhookUrl: settings.webhookUrl,
@@ -2250,12 +2272,9 @@ function NotificationPanel({ nodeId, settings, onUpdate }: PanelProps) {
         workflowName: '테스트 알림',
         executionSummary: '이것은 Metis.AI 워크플로우 알림 테스트입니다.',
       };
-      const resp = await fetch('/api/notifications/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const result = await resp.json();
+      const result = await api.post<{ success: boolean; error?: string; resolvedRecipients?: string[] }>(
+        '/api/notifications/send', payload
+      );
       if (result.success) {
         setTestResult({ success: true, message: `✅ 전송 성공! (${result.resolvedRecipients?.join(', ') || selectedChannel})` });
       } else {
